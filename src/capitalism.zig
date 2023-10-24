@@ -4,12 +4,14 @@ const ui = @import("ui.zig");
 const Board = @import("capitalism/Board.zig");
 const Algo = @import("capitalism/Algo.zig");
 const std = @import("std");
+const NumIn = ui.TextInputSized(2, ui.valid_nums);
 
 pub fn twoPlayer(app: *main.App) main.Scene {
     // Init
     var state = ui.DynText.init(700, 10, app.game_font, "Green's turn!", 36, 1, rl.Color.purple);
     var board = Board.init();
     var board_ui = BoardUi.init(500, 100);
+    var num_in = NumIn.init(20, 200, 24, app.game_font, rl.Color.purple);
     var finished = false;
 
     // Algo init
@@ -35,12 +37,14 @@ pub fn twoPlayer(app: *main.App) main.Scene {
         board_ui.draw(board);
         state.draw();
         a_ui.draw();
+        num_in.draw();
 
         rl.endDrawing();
 
         // Upadte
-        app.back_b.update();
+        app.back_b.update_click();
         a_ui.update(&a_state);
+        num_in.update();
 
         if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) {
             if (!finished) {
@@ -149,7 +153,7 @@ const AlgoUi = struct {
             char.* = ' ';
         }
         var fbs = std.io.fixedBufferStream(buf);
-        std.fmt.format(fbs.writer(), fmt ++ "\x00", args) catch {};
+        std.fmt.format(fbs.writer(), fmt ++ "\x00", args) catch unreachable;
         rl.drawTextEx(self.font, buf[0 .. fbs.pos - 1 :0], pos, self.font_size, 1, self.tint);
     }
 };

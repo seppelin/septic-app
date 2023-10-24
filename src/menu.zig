@@ -22,8 +22,8 @@ pub fn run(app: *main.App) main.Scene {
         rl.endDrawing();
 
         // Update
-        cap_b.update();
-        app.back_b.update();
+        cap_b.update_click();
+        app.back_b.update_click();
 
         if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) {
             if (cap_b.isHovered) {

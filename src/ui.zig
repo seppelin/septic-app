@@ -1,3 +1,4 @@
+const std = @import("std");
 const rl = @import("raylib");
 
 pub const Button = struct {
@@ -56,7 +57,7 @@ pub const Button = struct {
         rl.unloadTexture(b.texture);
     }
 
-    pub fn update(self: *Button) void {
+    pub fn update_click(self: *Button) void {
         self.isHovered = rl.checkCollisionPointRec(rl.getMousePosition(), self.rects[@intFromBool(self.isHovered)]);
     }
 
@@ -100,11 +101,11 @@ pub const DynText = struct {
     font: rl.Font,
     text: [:0]const u8,
     position: rl.Vector2,
-    font_size: f32,
+    f_size: f32,
     spacing: f32,
     tint: rl.Color,
 
-    pub fn init(x: i32, y: i32, font: rl.Font, text: [:0]const u8, font_size: f32, spacing: f32, tint: rl.Color) DynText {
+    pub fn init(x: i32, y: i32, font: rl.Font, text: [:0]const u8, f_size: f32, spacing: f32, tint: rl.Color) DynText {
         var position = rl.Vector2{
             .x = @floatFromInt(x),
             .y = @floatFromInt(y),
@@ -113,13 +114,94 @@ pub const DynText = struct {
             .font = font,
             .text = text,
             .position = position,
-            .font_size = font_size,
+            .f_size = f_size,
             .spacing = spacing,
             .tint = tint,
         };
     }
 
     pub fn draw(self: DynText) void {
-        rl.drawTextEx(self.font, self.text, self.position, self.font_size, self.spacing, self.tint);
+        rl.drawTextEx(self.font, self.text, self.position, self.f_size, self.spacing, self.tint);
     }
 };
+
+pub fn TextInputSized(comptime max_size: comptime_int, comptime valid_fn: anytype) type {
+    return struct {
+        const spacing = 1;
+        const a_diff = 20;
+
+        rect: rl.Rectangle,
+        pos: rl.Vector2,
+        text: [max_size + 1]u8,
+        len: u8,
+        f_size: f32,
+        font: rl.Font,
+        tint: rl.Color,
+        active: bool,
+
+        pub fn init(x: f32, y: f32, f_size: f32, font: rl.Font, tint: rl.Color) @This() {
+            var pos = rl.Vector2.init(x, y);
+            var m_text: [max_size + 1]u8 = undefined;
+            var i: u8 = 0;
+            while (i < max_size) : (i += 1) {
+                m_text[i] = 'W';
+            }
+            m_text[max_size] = '\x00';
+            var size = rl.measureTextEx(font, m_text[0..max_size :0], f_size, spacing);
+            var off_x = size.x * 0.1;
+            var off_y = size.y * 0.1;
+
+            var self = @This(){
+                .rect = rl.Rectangle{
+                    .x = pos.x - off_x / 2,
+                    .y = pos.y - off_y / 2,
+                    .width = size.x + off_x,
+                    .height = size.y + off_y,
+                },
+                .pos = pos,
+                .text = undefined,
+                .len = 0,
+                .f_size = f_size,
+                .font = font,
+                .tint = tint,
+                .active = false,
+            };
+            self.tint.a = if (self.tint.a < a_diff) 0 else self.tint.a - 25;
+            self.text[self.len] = '\x00';
+            return self;
+        }
+
+        pub fn draw(self: @This()) void {
+            rl.drawRectangleLinesEx(self.rect, 3, self.tint);
+            rl.drawTextEx(self.font, self.text[0..self.len :0], self.pos, self.f_size, spacing, self.tint);
+        }
+
+        pub fn update(self: *@This()) void {
+            // Mouse
+            if (rl.checkCollisionPointRec(rl.getMousePosition(), self.rect)) {
+                rl.setMouseCursor(@intFromEnum(rl.MouseCursor.mouse_cursor_ibeam));
+                if (rl.isMouseButtonDown(rl.MouseButton.mouse_button_left)) self.active = !self.active;
+                if (self.active) self.tint.a += a_diff else self.tint.a -= a_diff;
+            } else {
+                rl.setMouseCursor(@intFromEnum(rl.MouseCursor.mouse_cursor_default));
+            }
+            // Keys
+            var key = rl.getCharPressed();
+            while (key != 0 and self.len != max_size) : (key = rl.getCharPressed()) {
+                if (valid_fn(key)) {
+                    self.text[self.len] = @intCast(key);
+                    self.len += 1;
+                    self.text[self.len] = '\x00';
+                }
+            }
+            if (rl.isKeyPressed(rl.KeyboardKey.key_backspace) and self.len != 0) {
+                self.len -= 1;
+                self.text[self.len] = '\x00';
+            }
+        }
+    };
+}
+
+pub fn valid_nums(char: i32) bool {
+    return (char >= '0' and char <= '9');
+}
