@@ -74,16 +74,26 @@ pub fn run(s: Algo) void {
                         self.next_sign = ~self.next_sign;
                         self.len = self.board.getMoves(self.next_sign, &self.moves);
                     },
-                    .depth => |d| self.depth = @intCast(d),
+                    .depth => |d| {
+                        self.depth = @intCast(d);
+                    },
                     .running => |r| self.running = r,
                     .quit => break :outer,
                 }
             }
         }
+        self.state.mutex.lock();
+        self.state.moves = self.moves;
+        self.state.scores = self.scores;
+        self.state.len = self.len;
+        self.state.depth = @intCast(self.depth);
+        self.state.nodes = self.nodes;
+        self.state.running = self.running;
+        self.state.mutex.unlock();
         // Run algo
-        if (self.running) {
+        if (self.running and self.depth != 0) {
             var i: u8 = 0;
-            while (i < self.len) {
+            while (i < self.len) : (i += 1) {
                 var node = Node{
                     .board = self.board,
                     .next_sign = ~self.next_sign,
@@ -91,10 +101,10 @@ pub fn run(s: Algo) void {
                 };
                 node.board.doMove(self.next_sign, self.moves[i]);
                 if (self.negamax(&node)) |score| {
-                    self.scores[i] = score;
+                    self.scores[i] = -score;
 
                     self.state.mutex.lock();
-                    self.state.scores[i] = score;
+                    self.state.scores[i] = -score;
                     self.state.mutex.unlock();
                 }
                 // Changes to algo -> restart algo
@@ -108,7 +118,7 @@ pub fn run(s: Algo) void {
 }
 
 fn negamax(self: *Algo, node: *Node) ?i8 {
-    if (self.nodes % 100_000 == 0) {
+    if (self.nodes % 1_000_000 == 0) {
         if (!self.in.isEmpty()) {
             return null;
         }
@@ -122,10 +132,10 @@ fn negamax(self: *Algo, node: *Node) ?i8 {
         if (win[~node.next_sign]) {
             return 0;
         }
-        return std.math.maxInt(i8) - node.depth;
+        return std.math.minInt(i8) + node.depth;
     }
     if (win[~node.next_sign]) {
-        return std.math.minInt(i8) + node.depth;
+        return std.math.maxInt(i8) - node.depth;
     }
     if (node.depth == self.depth) {
         return 0;

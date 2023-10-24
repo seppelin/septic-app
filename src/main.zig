@@ -44,7 +44,6 @@ pub fn main() !void {
     rl.initWindow(1600, 900, "septic");
     defer rl.closeWindow();
 
-    rl.enableEventWaiting();
     rl.setTargetFPS(60);
 
     var app = App.init();

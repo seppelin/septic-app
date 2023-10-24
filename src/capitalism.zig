@@ -19,7 +19,14 @@ pub fn twoPlayer(app: *main.App) main.Scene {
     var a_state = Algo.State.init();
     var a_thread = Algo.spaw(board, board.next_sign, &a_ctl, &a_state) catch unreachable;
     var a_ui = AlgoUi.init(1400, 10, app.info_font, 16, rl.Color.purple, &a_state);
+    var a_update_timer = std.time.Timer.start() catch unreachable;
 
+    // cfg algo
+    a_ctl.mutex.lock();
+    a_ctl.queue[a_ctl.len] = Algo.Control.Msg{ .depth = 4 };
+    a_ctl.queue[a_ctl.len + 1] = Algo.Control.Msg{ .running = true };
+    a_ctl.len += 2;
+    a_ctl.mutex.unlock();
     defer {
         a_ctl.put(Algo.Control.Msg{
             .quit = {},
@@ -42,36 +49,62 @@ pub fn twoPlayer(app: *main.App) main.Scene {
         rl.endDrawing();
 
         // Upadte
-        app.back_b.update_click();
+        app.back_b.update();
         a_ui.update(&a_state);
         num_in.update();
 
+        if (a_update_timer.read() >= 100_000_000) {
+            a_ui.update(&a_state);
+        }
+
         if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) {
-            if (!finished) {
-                board_ui.update(&board);
-            }
-            if (app.back_b.isHovered) {
-                return main.Scene.Menu;
-            }
+            if (!finished) board_ui.update_click(&board);
+            if (app.back_b.isHovered) return main.Scene.Menu;
         }
 
         if (board.isSelected()) {
+            var sel = board.selected;
+            var a_move: Algo.Move = undefined;
+            switch (sel.?.pos) {
+                .new => a_move.new = true,
+                .board => |from_pos| {
+                    a_move.new = false;
+                    a_move.from_pos = @intCast(from_pos);
+                },
+            }
+            a_move.size = @intCast(sel.?.piece.size);
+            a_move.to_pos = @intCast(sel.?.to_pos.?);
             switch (board.doMove()) {
                 Board.MoveResult.Invalid => unreachable,
                 Board.MoveResult.Draw => {
                     state.text = "Draw!";
                     finished = true;
+                    a_ctl.put(Algo.Control.Msg{
+                        .running = false,
+                    });
                 },
                 Board.MoveResult.WinFalse => {
                     state.text = "Green won!";
                     finished = true;
+                    a_ctl.put(Algo.Control.Msg{
+                        .running = false,
+                    });
                 },
                 Board.MoveResult.WinTrue => {
                     state.text = "Red won!";
                     finished = true;
+                    a_ctl.put(Algo.Control.Msg{
+                        .running = false,
+                    });
                 },
                 Board.MoveResult.Continue => {
                     state.text = if (board.next_sign == 0) "Green's turn!" else "Red's turn!";
+                    a_ctl.put(Algo.Control.Msg{
+                        .move = a_move,
+                    });
+                    a_ctl.put(Algo.Control.Msg{
+                        .running = true,
+                    });
                 },
             }
         }
@@ -169,7 +202,7 @@ pub const BoardUi = struct {
         };
     }
 
-    pub fn update(self: BoardUi, board: *Board) void {
+    pub fn update_click(self: BoardUi, board: *Board) void {
         var mouse_x = rl.getMouseX();
         var mouse_y = rl.getMouseY();
         // Fields

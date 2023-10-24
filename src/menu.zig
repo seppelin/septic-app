@@ -22,16 +22,12 @@ pub fn run(app: *main.App) main.Scene {
         rl.endDrawing();
 
         // Update
-        cap_b.update_click();
-        app.back_b.update_click();
+        cap_b.update();
+        app.back_b.update();
 
         if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) {
-            if (cap_b.isHovered) {
-                return main.Scene.Capitalism;
-            }
-            if (app.back_b.isHovered) {
-                return main.Scene.Quit;
-            }
+            if (cap_b.isHovered) return main.Scene.Capitalism;
+            if (app.back_b.isHovered) return main.Scene.Quit;
         }
     }
 
