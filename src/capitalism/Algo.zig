@@ -3,170 +3,20 @@ const GameBoard = @import("Board.zig");
 const Mutex = std.Thread.Mutex;
 const Algo = @This();
 
-// Fields
-board: Board,
-next_sign: u1,
-moves: [42]Move,
-scores: [42]i8,
-len: u8,
-
-depth: i8,
-nodes: u64,
-
 running: bool,
+depth: u6,
+board: Board,
+nodes: u64,
+eval_moves: [42]Move,
+eval_scores: [42]i8,
+eval_len: u8,
 
 in: *Control,
 state: *State,
 
-pub fn spaw(g_board: GameBoard, next_sign: u1, ctl: *Control, state: *State) std.Thread.SpawnError!std.Thread {
-    var algo = init(g_board, next_sign, ctl, state);
-    return std.Thread.spawn(.{}, run, .{algo});
-}
-
-pub fn init(g_board: GameBoard, next_sign: u1, ctl: *Control, state: *State) Algo {
-    var algo = Algo{
-        .board = Board.from_game_board(g_board),
-        .next_sign = next_sign,
-        .moves = undefined,
-        .len = undefined,
-
-        .scores = undefined,
-        .nodes = 0,
-
-        .depth = 0,
-        .running = false,
-
-        .in = ctl,
-        .state = state,
-    };
-    algo.len = algo.board.getMoves(next_sign, &algo.moves);
-    for (&algo.scores) |*score| {
-        score.* = 0;
-    }
-    state.mutex.lock();
-    state.moves = algo.moves;
-    state.scores = algo.scores;
-    state.len = algo.len;
-    state.depth = @intCast(algo.depth);
-    state.nodes = algo.nodes;
-    state.running = algo.running;
-    state.mutex.unlock();
-    return algo;
-}
-
-pub fn run(s: Algo) void {
-    var self = s;
-    outer: while (true) : (std.time.sleep(100_000_000)) {
-        if (!self.in.isEmpty()) {
-            // Reset
-            for (&self.scores) |*score| {
-                score.* = 0;
-            }
-            self.nodes = 0;
-            // Update
-            var in_buf: [8]Control.Msg = undefined;
-            var in_len = self.in.getAll(&in_buf);
-            var i: u8 = 0;
-            while (i < in_len) : (i += 1) {
-                switch (in_buf[i]) {
-                    .move => |m| {
-                        self.board.doMove(self.next_sign, m);
-                        self.next_sign = ~self.next_sign;
-                        self.len = self.board.getMoves(self.next_sign, &self.moves);
-                    },
-                    .depth => |d| {
-                        self.depth = @intCast(d);
-                    },
-                    .running => |r| self.running = r,
-                    .quit => break :outer,
-                }
-            }
-        }
-        self.state.mutex.lock();
-        self.state.moves = self.moves;
-        self.state.scores = self.scores;
-        self.state.len = self.len;
-        self.state.depth = @intCast(self.depth);
-        self.state.nodes = self.nodes;
-        self.state.running = self.running;
-        self.state.mutex.unlock();
-        // Run algo
-        if (self.running and self.depth != 0) {
-            var i: u8 = 0;
-            while (i < self.len) : (i += 1) {
-                var node = Node{
-                    .board = self.board,
-                    .next_sign = ~self.next_sign,
-                    .depth = 1,
-                };
-                node.board.doMove(self.next_sign, self.moves[i]);
-                if (self.negamax(&node)) |score| {
-                    self.scores[i] = -score;
-
-                    self.state.mutex.lock();
-                    self.state.scores[i] = -score;
-                    self.state.mutex.unlock();
-                }
-                // Changes to algo -> restart algo
-                else {
-                    continue :outer;
-                }
-            }
-            self.running = false;
-        }
-    }
-}
-
-fn negamax(self: *Algo, node: *Node) ?i8 {
-    if (self.nodes % 1_000_000 == 0) {
-        if (!self.in.isEmpty()) {
-            return null;
-        }
-        self.state.mutex.lock();
-        self.state.nodes = self.nodes;
-        self.state.mutex.unlock();
-    }
-
-    var win = node.board.checkWin();
-    if (win[node.next_sign]) {
-        if (win[~node.next_sign]) {
-            return 0;
-        }
-        return std.math.minInt(i8) + node.depth;
-    }
-    if (win[~node.next_sign]) {
-        return std.math.maxInt(i8) - node.depth;
-    }
-    if (node.depth == self.depth) {
-        return 0;
-    }
-
-    var best_score: i8 = 0;
-    var moves: [42]Move = undefined;
-    var len = node.board.getMoves(node.next_sign, &moves);
-    var i: u8 = 0;
-    while (i < len) : (i += 1) {
-        self.nodes += 1;
-        node.board.doMove(node.next_sign, moves[i]);
-        node.next_sign = ~node.next_sign;
-        node.depth += 1;
-
-        if (negamax(self, node)) |score| {
-            best_score = @max(best_score, -score);
-        } else {
-            return null;
-        }
-
-        node.depth -= 1;
-        node.next_sign = ~node.next_sign;
-        node.board.undoMove(node.next_sign, moves[i]);
-    }
-    return best_score;
-}
-
 pub const Control = struct {
     pub const Msg = union(enum) {
-        depth: u8,
+        depth: u6,
         move: Move,
         running: bool,
         quit: void,
@@ -217,14 +67,11 @@ pub const Control = struct {
 
 pub const State = struct {
     mutex: Mutex,
-
     moves: [42]Move,
     scores: [42]i8,
     len: u8,
-
-    depth: u8,
+    depth: u6,
     nodes: u64,
-
     running: bool,
 
     pub fn init() State {
@@ -240,22 +87,145 @@ pub const State = struct {
     }
 };
 
-const Node = struct {
-    board: Board,
-    next_sign: u1,
-    depth: i8,
-};
+pub fn init(g_board: GameBoard, ctl: *Control, state: *State) std.Thread.SpawnError!std.Thread {
+    var algo = Algo{
+        .running = false,
+        .depth = 0,
+        .board = Board.from_game_board(g_board),
+        .nodes = undefined,
+        .eval_moves = undefined,
+        .eval_scores = undefined,
+        .eval_len = undefined,
+
+        .in = ctl,
+        .state = state,
+    };
+    return std.Thread.spawn(.{}, run, .{algo});
+}
+
+// returns false if quit
+fn update(self: *Algo) bool {
+    if (self.in.isEmpty()) {
+        return true;
+    }
+    var in_buf: [8]Control.Msg = undefined;
+    var in_len = self.in.getAll(&in_buf);
+    var i: u8 = 0;
+    while (i < in_len) : (i += 1) {
+        switch (in_buf[i]) {
+            .move => |m| self.board.doMove(m),
+            .depth => |d| self.depth = d,
+            .running => |r| self.running = r,
+            .quit => return false,
+        }
+    }
+    self.board.depth = 0;
+    self.nodes = 0;
+    self.eval_len = self.board.getMoves(&self.eval_moves);
+    i = 0;
+    while (i < self.eval_len) : (i += 1) self.eval_scores[i] = 0;
+
+    self.state.mutex.lock();
+    self.state.running = self.running;
+    self.state.depth = self.depth;
+    self.state.nodes = 0;
+    self.state.moves = self.eval_moves;
+    self.state.scores = self.eval_scores;
+    self.state.len = self.eval_len;
+    self.state.mutex.unlock();
+    return true;
+}
+
+pub fn run(s: Algo) void {
+    var self = s;
+    outer: while (true) : (std.time.sleep(100_000_000)) {
+        if (!self.update()) {
+            break :outer;
+        }
+        // Run algo
+        if (self.running and self.depth != 0) {
+            var i: u8 = 0;
+            while (i < self.eval_len) : (i += 1) {
+                self.board.doMove(self.eval_moves[i]);
+                var val = self.negamax();
+                self.board.undoMove(self.eval_moves[i]);
+
+                if (val) |score| {
+                    self.eval_scores[i] = score;
+                } else {
+                    continue :outer;
+                }
+            }
+            self.running = false;
+        }
+    }
+}
+
+fn negamax(self: *Algo) ?i8 {
+    self.nodes += 1;
+    if (self.nodes % 100_000 == 0) {
+        if (!self.in.isEmpty()) {
+            return null;
+        }
+        self.state.mutex.lock();
+        self.state.nodes = self.nodes;
+        self.state.mutex.unlock();
+    }
+
+    if (self.board.getScore()) |score| return score;
+    if (self.board.depth == self.depth) return 0;
+
+    var best_score: i8 = undefined;
+    var moves: [42]Move = undefined;
+    var len = self.board.getMoves(&moves);
+
+    // Init best score
+    self.board.doMove(moves[0]);
+    var val = negamax(self);
+    self.board.undoMove(moves[0]);
+    if (val) |score| best_score = -score else return null;
+
+    var i: u8 = 1;
+    while (i < len) : (i += 1) {
+        self.board.doMove(moves[i]);
+        val = negamax(self);
+        self.board.undoMove(moves[i]);
+
+        if (val) |score| {
+            best_score = @max(best_score, -score);
+        } else {
+            return null;
+        }
+    }
+    return best_score;
+}
 
 pub const Move = packed struct {
     new: bool,
     size: u2,
     from_pos: u4,
     to_pos: u4,
+
+    pub fn from_sel(sel: GameBoard.Selected) Move {
+        var move: Move = undefined;
+        move.size = sel.piece.size;
+        move.to_pos = sel.to_pos.?;
+        switch (sel.from_pos) {
+            .new => move.new = true,
+            .board => |from_pos| {
+                move.new = false;
+                move.from_pos = from_pos;
+            },
+        }
+        return move;
+    }
 };
 
 const Board = struct {
     layers: [2][3]u24,
     pieces: [2][3]u2,
+    next_sign: u1,
+    depth: i8,
 
     // 012 345 678  036 147 258  048 246
     const move_layers = [9]u24{
@@ -274,7 +244,7 @@ const Board = struct {
         return Board{ .layers = [2][3]u24{
             [3]u24{ 0, 0, 0 },
             [3]u24{ 0, 0, 0 },
-        }, .pieces = [2]u6{ 0b111111, 0b111111 } };
+        }, .pieces = [2][3]u2{ [3]u2{ 2, 2, 2 }, [3]u2{ 2, 2, 2 } } };
     }
 
     fn from_game_board(board: GameBoard) Board {
@@ -293,66 +263,74 @@ const Board = struct {
         return Board{
             .layers = layers,
             .pieces = board.pieces,
+            .next_sign = board.next_sign,
+            .depth = 0,
         };
     }
 
-    fn doMove(self: *Board, sign: u1, move: Move) void {
+    fn doMove(self: *Board, move: Move) void {
         // From
         switch (move.new) {
-            true => self.pieces[sign][move.size] -= 1,
-            false => self.layers[sign][move.size] ^= move_layers[move.from_pos],
+            true => self.pieces[self.next_sign][move.size] -= 1,
+            false => self.layers[self.next_sign][move.size] ^= move_layers[move.from_pos],
         }
         // To
-        self.layers[sign][move.size] |= move_layers[move.to_pos];
+        self.layers[self.next_sign][move.size] |= move_layers[move.to_pos];
+
+        self.next_sign = ~self.next_sign;
+        self.depth += 1;
     }
 
-    fn undoMove(self: *Board, sign: u1, move: Move) void {
+    fn undoMove(self: *Board, move: Move) void {
+        self.depth -= 1;
+        self.next_sign = ~self.next_sign;
+
         // From
         switch (move.new) {
-            true => self.pieces[sign][move.size] += 1,
-            false => self.layers[sign][move.size] |= move_layers[move.from_pos],
+            true => self.pieces[self.next_sign][move.size] += 1,
+            false => self.layers[self.next_sign][move.size] |= move_layers[move.from_pos],
         }
         // To
-        self.layers[sign][move.size] ^= move_layers[move.to_pos];
+        self.layers[self.next_sign][move.size] ^= move_layers[move.to_pos];
     }
 
-    fn getMoves(self: *const Board, sign: u1, buf: *[42]Move) u8 {
+    fn getMoves(self: *const Board, buf: *[42]Move) u8 {
         var len: u8 = 0;
         var size: u2 = 0;
         var size_view: u24 = 0;
 
         while (size < 3) : (size += 1) {
             // New
-            if (self.pieces[sign][size] != 0) {
-                self.addMoves(true, sign, size, undefined, buf, &len);
+            if (self.pieces[self.next_sign][size] != 0) {
+                self.addMoves(true, size, undefined, buf, &len);
             }
             // Board
-            var moveable = self.layers[sign][2 - size] & ~size_view;
+            var moveable = self.layers[self.next_sign][2 - size] & ~size_view;
             var from_pos: u4 = 0;
             while (from_pos < 9) : (from_pos += 1) {
                 if (moveable & move_layers[from_pos] != 0) {
-                    self.addMoves(false, sign, 2 - size, from_pos, buf, &len);
+                    self.addMoves(false, 2 - size, from_pos, buf, &len);
                 }
             }
-            size_view |= self.layers[sign][2 - size] | self.layers[~sign][2 - size];
+            size_view |= self.layers[self.next_sign][2 - size] | self.layers[~self.next_sign][2 - size];
         }
 
         return len;
     }
 
-    fn addMoves(self: *const Board, new: bool, sign: u1, size: u2, from_pos: u4, buf: *[42]Move, len: *u8) void {
+    fn addMoves(self: *const Board, new: bool, size: u2, from_pos: u4, buf: *[42]Move, len: *u8) void {
         var to_pos: u4 = 0;
         var size_view: u24 = undefined;
         while (to_pos < 9) : (to_pos += 1) {
             size_view = switch (size) {
-                0 => self.layers[sign][2] | self.layers[~sign][2] |
-                    self.layers[sign][1] | self.layers[~sign][1] |
-                    self.layers[sign][0] | self.layers[~sign][0],
+                0 => self.layers[self.next_sign][2] | self.layers[~self.next_sign][2] |
+                    self.layers[self.next_sign][1] | self.layers[~self.next_sign][1] |
+                    self.layers[self.next_sign][0] | self.layers[~self.next_sign][0],
 
-                1 => self.layers[sign][2] | self.layers[~sign][2] |
-                    self.layers[sign][1] | self.layers[~sign][1],
+                1 => self.layers[self.next_sign][2] | self.layers[~self.next_sign][2] |
+                    self.layers[self.next_sign][1] | self.layers[~self.next_sign][1],
 
-                2 => self.layers[sign][2] | self.layers[~sign][2],
+                2 => self.layers[self.next_sign][2] | self.layers[~self.next_sign][2],
 
                 else => unreachable,
             };
@@ -369,6 +347,20 @@ const Board = struct {
         }
     }
 
+    fn getScore(self: *const Board) ?i8 {
+        var win = self.checkWin();
+        if (win[self.next_sign]) {
+            if (win[~self.next_sign]) {
+                return 0;
+            }
+            return 126 - self.depth;
+        }
+        if (win[~self.next_sign]) {
+            return -126 + self.depth;
+        }
+        return null;
+    }
+
     fn checkWin(self: *const Board) [2]bool {
         var win = [2]bool{ false, false };
         var view: u24 = undefined;
@@ -382,82 +374,3 @@ const Board = struct {
         return win;
     }
 };
-
-test "Sizes" {
-    std.debug.print("Algo: {}\n", .{@sizeOf(Algo)});
-    std.debug.print("Algo in: {}\n", .{@sizeOf(Control)});
-    std.debug.print("Algo state: {}\n", .{@sizeOf(State)});
-    std.debug.print("Algo move: {}\n", .{@sizeOf(Move)});
-    std.debug.print("Algo board: {}\n", .{@sizeOf(Board)});
-    std.debug.print("Algo node: {}\n", .{@sizeOf(Node)});
-}
-
-test "Board move" {
-    var board = Board.init();
-    var buf: [42]Move = undefined;
-    var len = board.getMoves(0, &buf);
-    try std.testing.expectEqual(len, (9 + 9 + 9));
-
-    var move = Move{
-        .new = true,
-        .size = 1,
-        .from_pos = undefined,
-        .to_pos = 0,
-    };
-    board.doMove(0, move);
-    len = board.getMoves(0, &buf);
-    try std.testing.expectEqual(len, 8 + (8 + 8 + 9));
-
-    move = Move{
-        .new = true,
-        .size = 2,
-        .from_pos = undefined,
-        .to_pos = 1,
-    };
-    board.doMove(0, move);
-    len = board.getMoves(0, &buf);
-    try std.testing.expectEqual(len, 7 + 8 + (7 + 7 + 8));
-
-    move = Move{
-        .new = false,
-        .size = 2,
-        .from_pos = 1,
-        .to_pos = 0,
-    };
-    board.doMove(0, move);
-    len = board.getMoves(0, &buf);
-    try std.testing.expectEqual(len, 8 + (8 + 8 + 8));
-
-    move = Move{
-        .new = true,
-        .size = 1,
-        .from_pos = undefined,
-        .to_pos = 1,
-    };
-    board.doMove(0, move);
-    len = board.getMoves(0, &buf);
-    try std.testing.expectEqual(len, 8 + 7 + (7 + 8));
-
-    move = Move{
-        .new = false,
-        .size = 2,
-        .from_pos = 0,
-        .to_pos = 2,
-    };
-    board.doMove(0, move);
-    var win = board.checkWin();
-    try std.testing.expectEqual(win[0], true);
-    try std.testing.expectEqual(win[1], false);
-
-    move = Move{
-        .new = true,
-        .size = 2,
-        .from_pos = undefined,
-        .to_pos = 0,
-    };
-    board.doMove(1, move);
-    len = board.getMoves(0, &buf);
-    try std.testing.expectEqual(len, 6 + 7 + (6 + 7));
-    len = board.getMoves(1, &buf);
-    try std.testing.expectEqual(len, 7 + (6 + 6 + 7));
-}

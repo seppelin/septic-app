@@ -47,7 +47,7 @@ pub fn select(self: *Board, pos: Position) void {
         var piece = self.getPiece(pos);
         if (piece != null and piece.?.sign == self.next_sign) {
             self.selected = Selected{
-                .pos = pos,
+                .from_pos = pos,
                 .piece = piece.?,
                 .to_pos = null,
             };
@@ -79,7 +79,7 @@ pub fn doMove(self: *Board) MoveResult {
     if (!self.isSelected()) {
         return MoveResult.Invalid;
     }
-    var from = self.selected.?.pos;
+    var from = self.selected.?.from_pos;
     var to = self.selected.?.to_pos.?;
     var piece = self.selected.?.piece;
 
@@ -147,7 +147,7 @@ pub const Field = struct {
     pieces: [3]?u1,
 
     pub fn getLast(self: Field) ?Piece {
-        for ([3]u8{ 2, 1, 0 }) |size| {
+        for ([3]u2{ 2, 1, 0 }) |size| {
             if (self.pieces[size]) |sign| {
                 return Piece{
                     .sign = sign,
@@ -159,7 +159,7 @@ pub const Field = struct {
     }
 
     fn removeLast(self: *Field) void {
-        for ([3]u8{ 2, 1, 0 }) |size| {
+        for ([3]u2{ 2, 1, 0 }) |size| {
             if (self.pieces[size]) |_| {
                 self.pieces[size] = null;
                 return;
@@ -174,14 +174,14 @@ pub const Field = struct {
 };
 
 pub const Selected = struct {
-    pos: Position,
+    from_pos: Position,
     piece: Piece,
-    to_pos: ?u8,
+    to_pos: ?u4,
 };
 
 pub const Position = union(enum) {
-    new: u8,
-    board: u8,
+    new: u2,
+    board: u4,
 
     pub fn isNew(self: Position) bool {
         return switch (self) {
@@ -193,5 +193,5 @@ pub const Position = union(enum) {
 
 pub const Piece = struct {
     sign: u1,
-    size: u8,
+    size: u2,
 };

@@ -17,13 +17,13 @@ pub fn twoPlayer(app: *main.App) main.Scene {
     // Algo init
     var a_ctl = Algo.Control.init();
     var a_state = Algo.State.init();
-    var a_thread = Algo.spaw(board, board.next_sign, &a_ctl, &a_state) catch unreachable;
+    var a_thread = Algo.init(board, &a_ctl, &a_state) catch unreachable;
     var a_ui = AlgoUi.init(1400, 10, app.info_font, 16, rl.Color.purple, &a_state);
     var a_update_timer = std.time.Timer.start() catch unreachable;
 
     // cfg algo
     a_ctl.mutex.lock();
-    a_ctl.queue[a_ctl.len] = Algo.Control.Msg{ .depth = 4 };
+    a_ctl.queue[a_ctl.len] = Algo.Control.Msg{ .depth = 5 };
     a_ctl.queue[a_ctl.len + 1] = Algo.Control.Msg{ .running = true };
     a_ctl.len += 2;
     a_ctl.mutex.unlock();
@@ -63,17 +63,7 @@ pub fn twoPlayer(app: *main.App) main.Scene {
         }
 
         if (board.isSelected()) {
-            var sel = board.selected;
-            var a_move: Algo.Move = undefined;
-            switch (sel.?.pos) {
-                .new => a_move.new = true,
-                .board => |from_pos| {
-                    a_move.new = false;
-                    a_move.from_pos = @intCast(from_pos);
-                },
-            }
-            a_move.size = @intCast(sel.?.piece.size);
-            a_move.to_pos = @intCast(sel.?.to_pos.?);
+            var move = Algo.Move.from_sel(board.selected.?);
             switch (board.doMove()) {
                 Board.MoveResult.Invalid => unreachable,
                 Board.MoveResult.Draw => {
@@ -100,7 +90,7 @@ pub fn twoPlayer(app: *main.App) main.Scene {
                 Board.MoveResult.Continue => {
                     state.text = if (board.next_sign == 0) "Green's turn!" else "Red's turn!";
                     a_ctl.put(Algo.Control.Msg{
-                        .move = a_move,
+                        .move = move,
                     });
                     a_ctl.put(Algo.Control.Msg{
                         .running = true,
@@ -207,8 +197,8 @@ pub const BoardUi = struct {
         var mouse_y = rl.getMouseY();
         // Fields
         if (mouse_x >= self.pos_x and mouse_y >= self.pos_y) {
-            var index_x: u8 = 0;
-            var index_y: u8 = 0;
+            var index_x: u4 = 0;
+            var index_y: u4 = 0;
 
             while (index_x < 3) : (index_x += 1) {
                 if (self.pos_x + (@as(i32, index_x) + 1) * 200 >= mouse_x) {
@@ -229,7 +219,7 @@ pub const BoardUi = struct {
         var start_x = if (board.next_sign == 0) self.pos_x - 250 else self.pos_x + 650;
 
         if (mouse_x >= start_x and mouse_y >= self.pos_y and mouse_x <= start_x + 200) {
-            var piece_size: u8 = 0;
+            var piece_size: u2 = 0;
             while (piece_size < 3) : (piece_size += 1) {
                 if (mouse_y <= self.pos_y + (@as(i32, piece_size) + 1) * 200) {
                     board.select(Board.Position{ .new = piece_size });
@@ -267,8 +257,8 @@ pub const BoardUi = struct {
                     rl.drawCircleLines(center_x, center_y, size, rl.Color.black);
 
                     if (board.selected != null and
-                        !board.selected.?.pos.isNew() and
-                        board.selected.?.pos.board == index)
+                        !board.selected.?.from_pos.isNew() and
+                        board.selected.?.from_pos.board == index)
                     {
                         rl.drawCircle(center_x, center_y, 15, rl.Color.yellow);
                     }
@@ -299,8 +289,8 @@ pub const BoardUi = struct {
                     }
 
                     if (board.selected != null and
-                        board.selected.?.pos.isNew() and
-                        board.selected.?.pos.new == piece_size and
+                        board.selected.?.from_pos.isNew() and
+                        board.selected.?.from_pos.new == piece_size and
                         board.selected.?.piece.sign == sign)
                     {
                         rl.drawCircle(center_x, center_y, 15, rl.Color.yellow);
