@@ -2,7 +2,7 @@ const main = @import("main.zig");
 const rl = @import("raylib");
 const ui = @import("ui.zig");
 const Board = @import("capitalism/Board.zig");
-const Algo = @import("capitalism/Algo.zig");
+const algo = @import("capitalism/algo.zig");
 const std = @import("std");
 const NumIn = ui.TextInputSized(2, ui.valid_nums);
 
@@ -15,22 +15,23 @@ pub fn twoPlayer(app: *main.App) main.Scene {
     var finished = false;
 
     // Algo init
-    var a_ctl = Algo.Control.init();
-    var a_state = Algo.State.init();
-    var a_thread = Algo.init(board, &a_ctl, &a_state) catch unreachable;
-    var a_ui = AlgoUi.init(1400, 10, app.info_font, 16, rl.Color.purple, &a_state);
+    var a_handle = algo.Handle.init(board);
+    var a_thread = algo.spawn(&a_handle) catch unreachable;
+    var a_ui = AlgoUi.init(1400, 10, app.info_font, 16, rl.Color.purple, &a_handle);
     var a_update_timer = std.time.Timer.start() catch unreachable;
 
     // cfg algo
-    a_ctl.mutex.lock();
-    a_ctl.queue[a_ctl.len] = Algo.Control.Msg{ .depth = 5 };
-    a_ctl.queue[a_ctl.len + 1] = Algo.Control.Msg{ .running = true };
-    a_ctl.len += 2;
-    a_ctl.mutex.unlock();
+    a_handle.mutex.lock();
+    a_handle.reload = true;
+    a_handle.state = algo.State.run;
+    a_handle.max_depth = 5;
+    a_handle.mutex.unlock();
+
     defer {
-        a_ctl.put(Algo.Control.Msg{
-            .quit = {},
-        });
+        a_handle.mutex.lock();
+        a_handle.reload = true;
+        a_handle.state = algo.State.quit;
+        a_handle.mutex.unlock();
         a_thread.join();
     }
 
@@ -50,12 +51,9 @@ pub fn twoPlayer(app: *main.App) main.Scene {
 
         // Upadte
         app.back_b.update();
-        a_ui.update(&a_state);
         num_in.update();
 
-        if (a_update_timer.read() >= 100_000_000) {
-            a_ui.update(&a_state);
-        }
+        if (a_update_timer.read() >= 100_000_000) a_ui.update(&a_handle);
 
         if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) {
             if (!finished) board_ui.update_click(&board);
@@ -63,39 +61,26 @@ pub fn twoPlayer(app: *main.App) main.Scene {
         }
 
         if (board.isSelected()) {
-            var move = Algo.Move.from_sel(board.selected.?);
-            switch (board.doMove()) {
-                Board.MoveResult.Invalid => unreachable,
-                Board.MoveResult.Draw => {
-                    state.text = "Draw!";
-                    finished = true;
-                    a_ctl.put(Algo.Control.Msg{
-                        .running = false,
-                    });
-                },
-                Board.MoveResult.WinFalse => {
-                    state.text = "Green won!";
-                    finished = true;
-                    a_ctl.put(Algo.Control.Msg{
-                        .running = false,
-                    });
-                },
-                Board.MoveResult.WinTrue => {
-                    state.text = "Red won!";
-                    finished = true;
-                    a_ctl.put(Algo.Control.Msg{
-                        .running = false,
-                    });
-                },
-                Board.MoveResult.Continue => {
-                    state.text = if (board.next_sign == 0) "Green's turn!" else "Red's turn!";
-                    a_ctl.put(Algo.Control.Msg{
-                        .move = move,
-                    });
-                    a_ctl.put(Algo.Control.Msg{
-                        .running = true,
-                    });
-                },
+            var res = board.doMove();
+            if (res != Board.MoveResult.ok) {
+                state.text = switch (res) {
+                    .draw => "Draw!",
+                    .win_true => "Red Won!",
+                    .win_false => "Green Won!",
+                    else => unreachable,
+                };
+                finished = true;
+                a_handle.mutex.lock();
+                a_handle.reload = true;
+                a_handle.state = algo.State.wait;
+                a_handle.mutex.unlock();
+            } else {
+                state.text = if (board.next_sign == 0) "Green's turn!" else "Red's turn!";
+                a_handle.mutex.lock();
+                a_handle.reload = true;
+                a_handle.state = algo.State.run;
+                a_handle.board = algo.Board.fromGBoard(board);
+                a_handle.mutex.unlock();
             }
         }
     }
@@ -108,45 +93,49 @@ const AlgoUi = struct {
     font_size: f32,
     tint: rl.Color,
 
-    moves: [42]Algo.Move,
-    scores: [42]i8,
-    len: u8,
-    depth: u8,
+    state: algo.State,
+    max_depth: u8,
     nodes: u64,
-    running: bool,
+    moves: [42]algo.Move,
+    moves_len: u8,
+    scores: [42]i8,
+    scores_len: u8,
 
-    fn init(x: f32, y: f32, font: rl.Font, font_size: f32, tint: rl.Color, state: *Algo.State) AlgoUi {
+    fn init(x: f32, y: f32, font: rl.Font, font_size: f32, tint: rl.Color, handle: *algo.Handle) AlgoUi {
         var a_state: AlgoUi = undefined;
         a_state.pos = rl.Vector2.init(x, y);
         a_state.font = font;
         a_state.font_size = font_size;
         a_state.tint = tint;
-        a_state.update(state);
+        a_state.update(handle);
         return a_state;
     }
 
-    fn update(self: *AlgoUi, state: *Algo.State) void {
-        state.mutex.lock();
-        self.moves = state.moves;
-        self.scores = state.scores;
-        self.len = state.len;
-        self.depth = state.depth;
-        self.nodes = state.nodes;
-        self.running = state.running;
-        state.mutex.unlock();
+    fn update(self: *AlgoUi, handle: *algo.Handle) void {
+        handle.mutex.lock();
+        self.state = handle.state;
+        self.max_depth = handle.max_depth;
+        self.nodes = handle.nodes;
+        self.moves = handle.moves;
+        self.moves_len = handle.moves_len;
+        self.scores = handle.scores;
+        self.scores_len = handle.scores_len;
+        handle.mutex.unlock();
     }
 
     fn draw(self: AlgoUi) void {
         var column_size = self.font_size + 4;
         var column_pos = self.pos;
         var buf: [16]u8 = undefined;
-        self.drawBuf(&buf, "Algo state:", .{}, column_pos);
+        var state_s = switch (self.state) {
+            algo.State.quit => "quit",
+            algo.State.wait => "wait",
+            algo.State.run => "run",
+        };
+        self.drawBuf(&buf, "Algo {s}:", .{state_s}, column_pos);
 
         column_pos.y += column_size;
-        self.drawBuf(&buf, "Runin {}", .{self.running}, column_pos);
-
-        column_pos.y += column_size;
-        self.drawBuf(&buf, "Depth {}", .{self.depth}, column_pos);
+        self.drawBuf(&buf, "Depth {}", .{self.max_depth}, column_pos);
 
         column_pos.y += column_size;
         self.drawBuf(&buf, "Nds {}", .{self.nodes}, column_pos);
@@ -155,10 +144,10 @@ const AlgoUi = struct {
         self.drawBuf(&buf, "Moves:", .{}, column_pos);
 
         var i: u8 = 0;
-        while (i < self.len) : (i += 1) {
+        while (i < self.moves_len) : (i += 1) {
             if (i == 20) {
                 column_pos.x += 100;
-                column_pos.y -= 20 * (2 * column_size - 2);
+                column_pos.y -= 20 * (2 * column_size - 5);
             }
             column_pos.y += column_size;
             var move = self.moves[i];
@@ -167,10 +156,13 @@ const AlgoUi = struct {
             } else {
                 self.drawBuf(&buf, "B: s{} f{} t{}", .{ move.size, move.from_pos, move.to_pos }, column_pos);
             }
-            column_pos.y += column_size - 2;
-            self.drawBuf(&buf, "Score: {}", .{self.scores[i]}, column_pos);
+            column_pos.y += column_size - 5;
+            if (i < self.scores_len) {
+                self.drawBuf(&buf, "Score: {}", .{self.scores[i]}, column_pos);
+            }
         }
     }
+
     fn drawBuf(self: AlgoUi, buf: []u8, comptime fmt: []const u8, args: anytype, pos: rl.Vector2) void {
         for (buf) |*char| {
             char.* = ' ';

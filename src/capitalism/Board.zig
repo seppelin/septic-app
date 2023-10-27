@@ -68,16 +68,16 @@ pub fn select(self: *Board, pos: Position) void {
 }
 
 pub const MoveResult = enum {
-    Invalid,
-    Draw,
-    WinTrue,
-    WinFalse,
-    Continue,
+    invalid,
+    draw,
+    win_true,
+    win_false,
+    ok,
 };
 
 pub fn doMove(self: *Board) MoveResult {
     if (!self.isSelected()) {
-        return MoveResult.Invalid;
+        return MoveResult.invalid;
     }
     var from = self.selected.?.from_pos;
     var to = self.selected.?.to_pos.?;
@@ -104,13 +104,13 @@ pub fn doMove(self: *Board) MoveResult {
     }
 
     if (win[0] and win[1]) {
-        return MoveResult.Draw;
+        return MoveResult.draw;
     } else if (win[0]) {
-        return MoveResult.WinFalse;
+        return MoveResult.win_false;
     } else if (win[1]) {
-        return MoveResult.WinTrue;
+        return MoveResult.win_true;
     } else {
-        return MoveResult.Continue;
+        return MoveResult.ok;
     }
 }
 

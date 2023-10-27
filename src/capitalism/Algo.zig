@@ -1,204 +1,177 @@
 const std = @import("std");
 const GameBoard = @import("Board.zig");
-const Mutex = std.Thread.Mutex;
-const Algo = @This();
+const Thread = std.Thread;
+const Mutex = Thread.Mutex;
+const update_time = 100_000_000;
 
-running: bool,
-depth: u6,
-board: Board,
-nodes: u64,
-eval_moves: [42]Move,
-eval_scores: [42]i8,
-eval_len: u8,
-
-in: *Control,
-state: *State,
-
-pub const Control = struct {
-    pub const Msg = union(enum) {
-        depth: u6,
-        move: Move,
-        running: bool,
-        quit: void,
-    };
-
-    mutex: Mutex,
-    queue: [8]Msg,
-    len: u8,
-
-    pub fn init() Control {
-        return Control{
-            .queue = undefined,
-            .len = 0,
-            .mutex = Mutex{},
-        };
-    }
-
-    pub fn getAll(self: *Control, buf: *[8]Msg) u8 {
-        self.mutex.lock();
-        buf.* = self.queue;
-        var len = self.len;
-        self.len = 0;
-        self.mutex.unlock();
-        return len;
-    }
-
-    pub fn put(self: *Control, item: Msg) void {
-        self.mutex.lock();
-        self.queue[self.len] = item;
-        self.len += 1;
-        self.mutex.unlock();
-    }
-
-    pub fn isEmpty(self: *Control) bool {
-        self.mutex.lock();
-        var empty = (self.len == 0);
-        self.mutex.unlock();
-        return empty;
-    }
-
-    pub fn isFull(self: *Control) bool {
-        self.mutex.lock();
-        var full = (self.len == self.queue.len);
-        self.mutex.unlock();
-        return full;
-    }
+pub const State = enum {
+    quit,
+    run,
+    wait,
 };
 
-pub const State = struct {
+pub const Handle = struct {
     mutex: Mutex,
-    moves: [42]Move,
-    scores: [42]i8,
-    len: u8,
-    depth: u6,
+
+    reload: bool,
+    state: State,
+    board: Board,
+    max_depth: u6,
+
     nodes: u64,
-    running: bool,
+    moves: [42]Move,
+    moves_len: u8,
+    scores: [42]i8,
+    scores_len: u8,
 
-    pub fn init() State {
-        return State{
+    pub fn init(g_board: GameBoard) Handle {
+        return Handle{
             .mutex = Mutex{},
-            .moves = undefined,
-            .scores = undefined,
-            .len = 0,
-            .depth = 0,
+            .reload = false,
+            .state = State.wait,
+            .board = Board.fromGBoard(g_board),
+            .max_depth = 0,
             .nodes = 0,
-            .running = false,
+            .moves = undefined,
+            .moves_len = 0,
+            .scores = undefined,
+            .scores_len = 0,
         };
     }
 };
 
-pub fn init(g_board: GameBoard, ctl: *Control, state: *State) std.Thread.SpawnError!std.Thread {
-    var algo = Algo{
-        .running = false,
-        .depth = 0,
-        .board = Board.from_game_board(g_board),
-        .nodes = undefined,
-        .eval_moves = undefined,
-        .eval_scores = undefined,
-        .eval_len = undefined,
-
-        .in = ctl,
-        .state = state,
-    };
-    return std.Thread.spawn(.{}, run, .{algo});
+pub fn spawn(handle: *Handle) Thread.SpawnError!Thread {
+    return Thread.spawn(.{}, Algo.start, .{handle});
 }
 
-// returns false if quit
-fn update(self: *Algo) bool {
-    if (self.in.isEmpty()) {
-        return true;
-    }
-    var in_buf: [8]Control.Msg = undefined;
-    var in_len = self.in.getAll(&in_buf);
-    var i: u8 = 0;
-    while (i < in_len) : (i += 1) {
-        switch (in_buf[i]) {
-            .move => |m| self.board.doMove(m),
-            .depth => |d| self.depth = d,
-            .running => |r| self.running = r,
-            .quit => return false,
-        }
-    }
-    self.board.depth = 0;
-    self.nodes = 0;
-    self.eval_len = self.board.getMoves(&self.eval_moves);
-    i = 0;
-    while (i < self.eval_len) : (i += 1) self.eval_scores[i] = 0;
+const Algo = struct {
+    state: State,
+    board: Board,
+    max_depth: u6,
+    nodes: u64,
+    moves: [42]Move,
+    moves_len: u8,
+    scores: [42]i8,
+    scores_len: u8,
+    handle: *Handle,
 
-    self.state.mutex.lock();
-    self.state.running = self.running;
-    self.state.depth = self.depth;
-    self.state.nodes = 0;
-    self.state.moves = self.eval_moves;
-    self.state.scores = self.eval_scores;
-    self.state.len = self.eval_len;
-    self.state.mutex.unlock();
-    return true;
-}
+    fn start(handle: *Handle) void {
+        var self = Algo.fromHandle(handle);
 
-pub fn run(s: Algo) void {
-    var self = s;
-    outer: while (true) : (std.time.sleep(100_000_000)) {
-        if (!self.update()) {
-            break :outer;
-        }
-        // Run algo
-        if (self.running and self.depth != 0) {
-            var i: u8 = 0;
-            while (i < self.eval_len) : (i += 1) {
-                self.board.doMove(self.eval_moves[i]);
-                var val = self.negamax();
-                self.board.undoMove(self.eval_moves[i]);
-
-                if (val) |score| {
-                    self.eval_scores[i] = score;
-                } else {
-                    continue :outer;
-                }
+        while (true) : (std.time.sleep(update_time)) {
+            self.update();
+            switch (self.state) {
+                .quit => return,
+                .run => self.run(),
+                .wait => {},
             }
-            self.running = false;
         }
     }
-}
 
-fn negamax(self: *Algo) ?i8 {
-    self.nodes += 1;
-    if (self.nodes % 100_000 == 0) {
-        if (!self.in.isEmpty()) {
-            return null;
-        }
-        self.state.mutex.lock();
-        self.state.nodes = self.nodes;
-        self.state.mutex.unlock();
+    fn fromHandle(handle: *Handle) Algo {
+        handle.mutex.lock();
+        var algo = Algo{
+            .state = handle.state,
+            .board = handle.board,
+            .max_depth = handle.max_depth,
+            .nodes = handle.nodes,
+            .moves = handle.moves,
+            .moves_len = handle.moves_len,
+            .scores = handle.scores,
+            .scores_len = handle.scores_len,
+            .handle = handle,
+        };
+        handle.mutex.unlock();
+        return algo;
     }
 
-    if (self.board.getScore()) |score| return score;
-    if (self.board.depth == self.depth) return 0;
+    fn update(self: *Algo) void {
+        self.handle.mutex.lock();
+        if (self.handle.reload) {
+            self.state = self.handle.state;
+            self.board = self.handle.board;
+            self.max_depth = self.handle.max_depth;
 
-    var best_score: i8 = undefined;
-    var moves: [42]Move = undefined;
-    var len = self.board.getMoves(&moves);
+            self.nodes = 0;
+            self.moves_len = self.board.getMoves(&self.moves);
+            self.scores_len = 0;
 
-    // Init best score
-    self.board.doMove(moves[0]);
-    var val = negamax(self);
-    self.board.undoMove(moves[0]);
-    if (val) |score| best_score = -score else return null;
-
-    var i: u8 = 1;
-    while (i < len) : (i += 1) {
-        self.board.doMove(moves[i]);
-        val = negamax(self);
-        self.board.undoMove(moves[i]);
-
-        if (val) |score| {
-            best_score = @max(best_score, -score);
-        } else {
-            return null;
+            self.handle.nodes = self.nodes;
+            self.handle.moves = self.moves;
+            self.handle.moves_len = self.moves_len;
+            self.handle.scores_len = self.scores_len;
+            self.handle.reload = false;
         }
+        self.handle.mutex.unlock();
     }
-    return best_score;
-}
+
+    fn run(self: *Algo) void {
+        var i: u8 = 0;
+        while (i < self.moves_len) : (i += 1) {
+            self.board.doMove(self.moves[i]);
+            var val = self.negamax();
+            self.board.undoMove(self.moves[i]);
+
+            if (val) |score| {
+                self.handle.mutex.lock();
+                self.scores[self.scores_len] = -score;
+                self.scores_len += 1;
+                self.handle.scores[self.handle.scores_len] = -score;
+                self.handle.scores_len += 1;
+                self.handle.mutex.unlock();
+            } else {
+                return;
+            }
+        }
+        self.state = State.wait;
+        self.handle.mutex.lock();
+        self.handle.state = self.state;
+        self.handle.nodes = self.nodes;
+        self.handle.mutex.unlock();
+    }
+    // returns null if reload
+    fn negamax(self: *Algo) ?i8 {
+        self.nodes += 1;
+        if (self.nodes % 100_000 == 0) {
+            self.handle.mutex.lock();
+
+            if (self.handle.reload) {
+                self.handle.mutex.unlock();
+                return null;
+            } else {
+                self.handle.nodes = self.nodes;
+                self.handle.mutex.unlock();
+            }
+        }
+
+        if (self.board.getScore()) |score| return score;
+        if (self.board.depth == self.max_depth) return 0;
+
+        var best_score: i8 = undefined;
+        var moves: [42]Move = undefined;
+        var len = self.board.getMoves(&moves);
+
+        // Init best score
+        self.board.doMove(moves[0]);
+        var val = self.negamax();
+        self.board.undoMove(moves[0]);
+        if (val) |score| best_score = -score else return null;
+
+        var i: u8 = 1;
+        while (i < len) : (i += 1) {
+            self.board.doMove(moves[i]);
+            val = self.negamax();
+            self.board.undoMove(moves[i]);
+
+            if (val) |score| {
+                best_score = @max(best_score, -score);
+            } else {
+                return null;
+            }
+        }
+        return best_score;
+    }
+};
 
 pub const Move = packed struct {
     new: bool,
@@ -221,7 +194,7 @@ pub const Move = packed struct {
     }
 };
 
-const Board = struct {
+pub const Board = struct {
     layers: [2][3]u24,
     pieces: [2][3]u2,
     next_sign: u1,
@@ -247,7 +220,7 @@ const Board = struct {
         }, .pieces = [2][3]u2{ [3]u2{ 2, 2, 2 }, [3]u2{ 2, 2, 2 } } };
     }
 
-    fn from_game_board(board: GameBoard) Board {
+    pub fn fromGBoard(board: GameBoard) Board {
         var layers = [2][3]u24{
             [3]u24{ 0, 0, 0 },
             [3]u24{ 0, 0, 0 },
