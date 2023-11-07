@@ -9,6 +9,8 @@ pub fn run(app: *main.App) main.Scene {
     defer title.deinit();
     var gobblers_b = ui.Button.from_text(700, 300, app.game_font, "gobblers", 36, 1, rl.Color.purple);
     defer gobblers_b.deinit();
+    var op = m_ui.MenuSelect.init(.{ .x = 200, .y = 100, .width = 128, .height = 48 }, "assets/septic_small.png");
+    var ticked = false;
 
     defer rl.endDrawing();
     while (!rl.windowShouldClose()) {
@@ -19,6 +21,7 @@ pub fn run(app: *main.App) main.Scene {
             if (app.back_b.tick()) return main.Scene.Quit;
             if (gobblers_b.tick()) return main.Scene.Gobblers;
             title.draw();
+            ticked = op.tick(ticked);
         }
         rl.endDrawing();
     }
