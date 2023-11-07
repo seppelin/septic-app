@@ -182,13 +182,12 @@ pub fn TextInputSized(comptime max_size: comptime_int, comptime valid_fn: anytyp
 
         pub fn update(self: *@This()) void {
             // Mouse
-
             if (rl.checkCollisionPointRec(rl.getMousePosition(), self.rect)) {
-                if (rl.isMouseButtonDown(rl.MouseButton.mouse_button_left)) self.active = !self.active;
+                if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) self.active = !self.active;
                 rl.setMouseCursor(@intFromEnum(rl.MouseCursor.mouse_cursor_ibeam));
             } else {
                 rl.setMouseCursor(@intFromEnum(rl.MouseCursor.mouse_cursor_default));
-                if (rl.isMouseButtonDown(rl.MouseButton.mouse_button_left)) self.active = false;
+                if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) self.active = false;
             }
             if (self.active) self.tint.a = self.a_active else self.tint.a = self.a;
             // Keys

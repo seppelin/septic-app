@@ -2,9 +2,10 @@ const std = @import("std");
 const rl = @import("raylib");
 const main = @import("main.zig");
 const ui = @import("ui.zig");
+const m_ui = @import("menu/ui.zig");
 
 pub fn run(app: *main.App) main.Scene {
-    var title = ui.Text.init(700, 200, app.game_font, "game-modes", 48, 1, rl.Color.purple);
+    var title = ui.Text.init(700, 200, app.info_font, "game-modes", 48, 1, rl.Color.purple);
     defer title.deinit();
 
     var cap_b = ui.Button.from_text(700, 300, app.game_font, "capitalism", 36, 1, rl.Color.purple);
