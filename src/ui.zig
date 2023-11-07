@@ -57,11 +57,8 @@ pub const Button = struct {
         rl.unloadTexture(b.texture);
     }
 
-    pub fn update(self: *Button) void {
+    pub fn tick(self: *Button) bool {
         self.isHovered = rl.checkCollisionPointRec(rl.getMousePosition(), self.rects[@intFromBool(self.isHovered)]);
-    }
-
-    pub fn draw(self: Button) void {
         if (self.isHovered) {
             var pos = rl.Vector2.init(self.rects[1].x, self.rects[1].y);
             rl.drawTextureEx(self.texture, pos, 0.0, 1.1, rl.Color.white);
@@ -69,6 +66,7 @@ pub const Button = struct {
             var pos = rl.Vector2.init(self.rects[0].x, self.rects[0].y);
             rl.drawTextureEx(self.texture, pos, 0.0, 1.0, rl.Color.white);
         }
+        return self.isHovered and rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left);
     }
 };
 

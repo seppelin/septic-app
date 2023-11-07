@@ -1,17 +1,15 @@
 const main = @import("main.zig");
 const rl = @import("raylib");
 const ui = @import("ui.zig");
-const Board = @import("capitalism/Board.zig");
-const Algo = @import("capitalism/Algo.zig");
+const Board = @import("gobblers/Board.zig");
+const Algo = @import("gobblers/Algo.zig");
 const std = @import("std");
-const NumIn = ui.TextInputSized(2, ui.valid_nums);
 
 pub fn twoPlayer(app: *main.App) main.Scene {
     // Init
     var state = ui.DynText.init(700, 10, app.game_font, "Green's turn!", 36, 1, rl.Color.purple);
     var board = Board.init();
     var board_ui = BoardUi.init(500, 100);
-    var num_in = NumIn.init(20, 200, 24, app.game_font, rl.Color.purple);
     var finished = false;
 
     // Algo init
@@ -24,6 +22,7 @@ pub fn twoPlayer(app: *main.App) main.Scene {
         a_ctl.state = .quit;
         a_handle.setCtl(a_ctl);
         a_thread.join();
+        rl.endDrawing();
     }
 
     // Loop
@@ -31,21 +30,17 @@ pub fn twoPlayer(app: *main.App) main.Scene {
         // Draw
         rl.beginDrawing();
         rl.clearBackground(main.bg);
-        app.back_b.draw();
+        if (app.back_b.tick()) return main.Scene.Menu;
         board_ui.draw(board);
         state.draw();
         a_ui.draw();
-        num_in.draw();
         rl.endDrawing();
 
         // Upadte
-        app.back_b.update();
-        num_in.update();
         a_ui.update(&a_handle);
 
         if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) {
             if (!finished) board_ui.update_click(&board);
-            if (app.back_b.isHovered) return main.Scene.Menu;
         }
 
         if (board.isSelected()) {

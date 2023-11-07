@@ -1,6 +1,6 @@
 const rl = @import("raylib");
 const menu = @import("menu.zig");
-const cap = @import("capitalism.zig");
+const gobblers = @import("gobblers.zig");
 const ui = @import("ui.zig");
 
 pub const bg = rl.Color{
@@ -12,7 +12,7 @@ pub const bg = rl.Color{
 
 pub const Scene = enum {
     Menu,
-    Capitalism,
+    Gobblers,
     Quit,
 };
 
@@ -44,7 +44,6 @@ pub fn main() !void {
     rl.initWindow(1600, 900, "septic");
     defer rl.closeWindow();
 
-    rl.setTraceLogLevel(rl.TraceLogLevel.log_error);
     rl.setTargetFPS(60);
 
     var app = App.init();
@@ -55,7 +54,7 @@ pub fn main() !void {
     while (true) {
         scene = switch (scene) {
             Scene.Menu => menu.run(&app),
-            Scene.Capitalism => cap.twoPlayer(&app),
+            Scene.Gobblers => gobblers.twoPlayer(&app),
             Scene.Quit => break,
         };
     }
