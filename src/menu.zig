@@ -3,13 +3,15 @@ const rl = @import("raylib");
 const main = @import("main.zig");
 const ui = @import("ui.zig");
 const m_ui = @import("menu/ui.zig");
+const SelectButton = m_ui.SlideButton(0.4, 60, m_ui.animSine);
 
 pub fn run(app: *main.App) main.Scene {
     var title = ui.Text.init(700, 200, app.info_font, "game-modes", 48, 1, rl.Color.purple);
     defer title.deinit();
     var gobblers_b = ui.Button.from_text(700, 300, app.game_font, "gobblers", 36, 1, rl.Color.purple);
     defer gobblers_b.deinit();
-    var op = m_ui.MenuSelect.init(.{ .x = 200, .y = 100, .width = 128, .height = 48 }, "assets/septic_small.png");
+
+    var op = SelectButton.init(.{ .x = 200, .y = 100, .width = 128, .height = 48 }, "assets/septic_small.png");
     var ticked = false;
 
     defer rl.endDrawing();
