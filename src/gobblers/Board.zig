@@ -1,197 +1,152 @@
-const lines = [8][3]u8{
-    [_]u8{ 0, 1, 2 },
-    [_]u8{ 3, 4, 5 },
-    [_]u8{ 6, 7, 8 },
-    [_]u8{ 0, 3, 6 },
-    [_]u8{ 1, 4, 7 },
-    [_]u8{ 2, 5, 8 },
-    [_]u8{ 0, 4, 8 },
-    [_]u8{ 2, 4, 6 },
+pub const Move = packed struct {
+    new: bool,
+    size: u2,
+    from_pos: u4,
+    to_pos: u4,
 };
 
-const Board = @This();
+const Pos = @This();
 
-fields: [9]Field,
+layers: [2][3]u9,
 pieces: [2][3]u2,
 next_sign: u1,
-selected: ?Selected,
+moves: i8,
 
-pub fn init() Board {
-    var fields: [9]Field = undefined;
-    for (&fields) |*field| {
-        field.* = Field{
-            .pieces = [3]?u1{ null, null, null },
-        };
-    }
+pub fn init() Pos {
+    return Pos{ .layers = .{
+        .{ 0, 0, 0 },
+        .{ 0, 0, 0 },
+    }, .pieces = .{ .{ 2, 2, 2 }, .{ 2, 2, 2 } }, .next_sign = 0, .moves = 0 };
+}
 
-    var pieces = [2][3]u2{
-        [3]u2{ 2, 2, 2 },
-        [3]u2{ 2, 2, 2 },
+pub fn signTopView(self: Pos, sign: u1) u9 {
+    return self.layers[sign][0] & ~self.layers[~sign][1] | self.layers[sign][1] & ~self.layers[~sign][2] | self.layers[sign][2];
+}
+
+pub fn biggerView(self: Pos, size: u2) u9 {
+    return switch (size) {
+        0 => self.layers[0][0] | self.layers[1][0] |
+            self.layers[0][1] | self.layers[1][1] |
+            self.layers[0][2] | self.layers[1][2],
+        1 => self.layers[0][1] | self.layers[1][1] |
+            self.layers[0][2] | self.layers[1][2],
+        2 => self.layers[0][2] | self.layers[1][2],
+        3 => unreachable,
     };
-
-    return Board{
-        .fields = fields,
-        .pieces = pieces,
-        .next_sign = 0,
-        .selected = null,
-    };
 }
 
-pub fn isSelected(self: *Board) bool {
-    return self.selected != null and self.selected.?.to_pos != null;
+pub fn getKey(self: *Pos) u48 {
+    var key: u48 = 0;
+    var sign: u6 = 0;
+    while (sign < 2) : (sign += 1) {
+        var size: u6 = 0;
+        while (size < 3) : (size += 1) {
+            var piece_count: u8 = 0;
+            var pos: u4 = 0;
+            while (pos < 9) : (pos += 1) {
+                if (self.layers[sign][size] & (1 << pos) != 0) {
+                    piece_count <<= 4;
+                    piece_count += pos + 1;
+                }
+            }
+            key <<= 8;
+            key += piece_count;
+        }
+    }
+    return key;
 }
 
-pub fn select(self: *Board, pos: Position) void {
-    if (self.selected == null or pos.isNew()) {
-        // New Selection
-        var piece = self.getPiece(pos);
-        if (piece != null and piece.?.sign == self.next_sign) {
-            self.selected = Selected{
-                .from_pos = pos,
-                .piece = piece.?,
-                .to_pos = null,
-            };
-        }
-        // Clicked on empty field
-        else {
-            self.selected = null;
-        }
-    } else {
-        var to_last = self.fields[pos.board].getLast();
-        // Place the selected piece on a field
-        if (to_last == null or to_last.?.size < self.selected.?.piece.size) {
-            self.selected.?.to_pos = pos.board;
-        } else {
-            self.selected = null;
-        }
+pub fn doMove(self: *Pos, move: Move) void {
+    // From
+    switch (move.new) {
+        true => self.pieces[self.next_sign][move.size] -= 1,
+        false => self.layers[self.next_sign][move.size] ^= (1 << move.from_pos),
     }
+    // To
+    self.layers[self.next_sign][move.size] |= (1 << move.to_pos);
+
+    self.next_sign = ~self.next_sign;
+    self.moves += 1;
 }
 
-pub const MoveResult = enum {
-    invalid,
-    draw,
-    win_true,
-    win_false,
-    ok,
-};
-
-pub fn doMove(self: *Board) MoveResult {
-    if (!self.isSelected()) {
-        return MoveResult.invalid;
-    }
-    var from = self.selected.?.from_pos;
-    var to = self.selected.?.to_pos.?;
-    var piece = self.selected.?.piece;
-
-    // remove from
-    switch (from) {
-        .new => |size| self.pieces[self.next_sign][size] -= 1,
-        .board => |board_pos| self.fields[board_pos].removeLast(),
-    }
-
-    // add to
-    self.fields[to].add(piece);
-
-    self.selected = null;
+pub fn undoMove(self: *Pos, move: Move) void {
+    self.moves -= 1;
     self.next_sign = ~self.next_sign;
 
-    // check win
-    var win = [2]bool{ false, false };
-    for (lines) |line| {
-        if (self.checkLine(line)) |sign| {
-            win[sign] = true;
+    // From
+    switch (move.new) {
+        true => self.pieces[self.next_sign][move.size] += 1,
+        false => self.layers[self.next_sign][move.size] |= (1 << move.from_pos),
+    }
+    // To
+    self.layers[self.next_sign][move.size] ^= (1 << move.to_pos);
+}
+
+pub fn pieceLeft(self: Pos, size: u2) bool {
+    return self.pieces[self.next_sign][size] != 0;
+}
+
+pub fn getMoves(self: *const Pos, buf: *[42]Move) u8 {
+    var len: u8 = 0;
+    var size: u2 = 0;
+    var size_view: u9 = 0;
+
+    while (size < 3) : (size += 1) {
+        // New
+        if (self.pieces[self.next_sign][size] != 0) {
+            self.addMoves(true, size, undefined, buf, &len);
         }
+        // Board
+        var moveable = self.layers[self.next_sign][2 - size] & ~size_view;
+        var from_pos: u4 = 0;
+        while (from_pos < 9) : (from_pos += 1) {
+            if (moveable & (1 << from_pos) != 0) {
+                self.addMoves(false, 2 - size, from_pos, buf, &len);
+            }
+        }
+        size_view |= self.layers[self.next_sign][2 - size] | self.layers[~self.next_sign][2 - size];
     }
 
-    if (win[0] and win[1]) {
-        return MoveResult.draw;
-    } else if (win[0]) {
-        return MoveResult.win_false;
-    } else if (win[1]) {
-        return MoveResult.win_true;
-    } else {
-        return MoveResult.ok;
+    return len;
+}
+
+fn addMoves(self: *const Pos, new: bool, size: u2, from_pos: u4, buf: *[42]Move, len: *u8) void {
+    var to_pos: u4 = 0;
+    var bigger_view: u24 = undefined;
+    while (to_pos < 9) : (to_pos += 1) {
+        bigger_view = self.biggerView(size);
+        if (bigger_view & (1 << to_pos) == 0) {
+            buf[len.*] = Move{
+                .new = new,
+                .size = size,
+                .from_pos = from_pos,
+                .to_pos = to_pos,
+            };
+            len.* += 1;
+        }
     }
 }
 
-fn checkLine(self: *Board, line: [3]u8) ?u1 {
-    var piece0 = self.fields[line[0]].getLast() orelse return null;
-    var piece1 = self.fields[line[1]].getLast() orelse return null;
-    var piece2 = self.fields[line[2]].getLast() orelse return null;
-    if (piece0.sign == piece1.sign and piece0.sign == piece2.sign) {
-        return piece0.sign;
-    } else {
-        return null;
-    }
+fn checkView(view: u9) u2 {
+    // vertical
+    var check = view & (view << 1) & (view << 2) & 0b100100100;
+    // diag 1
+    check |= view & 0b001010100 ^ 0b001010100;
+    // diag 2
+    check |= view & 0b100010001 ^ 0b100010001;
+    // vorizontal
+    check |= view & (view << 3) & (view << 6) & 0b0000000111;
+    return @intFromBool(check != 0);
 }
 
-fn getPiece(self: *Board, pos: Position) ?Piece {
-    switch (pos) {
-        .new => |size| {
-            if (self.pieces[self.next_sign][size] > 0) {
-                return Piece{
-                    .sign = self.next_sign,
-                    .size = size,
-                };
-            } else {
-                return null;
-            }
-        },
-        .board => |board_pos| {
-            return self.fields[board_pos].getLast();
-        },
-    }
+pub fn getScore(self: *const Pos) i8 {
+    var edited = checkView(self.signTopView(self.next_sign));
+    edited |= checkView(self.signTopView(~self.next_sign)) << 1;
+
+    return switch (edited) {
+        0 => -128,
+        1 => 127 - self.moves,
+        2 => -127 + self.moves,
+        3 => 0,
+    };
 }
-
-pub const Field = struct {
-    pieces: [3]?u1,
-
-    pub fn getLast(self: Field) ?Piece {
-        for ([3]u2{ 2, 1, 0 }) |size| {
-            if (self.pieces[size]) |sign| {
-                return Piece{
-                    .sign = sign,
-                    .size = size,
-                };
-            }
-        }
-        return null;
-    }
-
-    fn removeLast(self: *Field) void {
-        for ([3]u2{ 2, 1, 0 }) |size| {
-            if (self.pieces[size]) |_| {
-                self.pieces[size] = null;
-                return;
-            }
-        }
-        unreachable;
-    }
-
-    fn add(self: *Field, piece: Piece) void {
-        self.pieces[piece.size] = piece.sign;
-    }
-};
-
-pub const Selected = struct {
-    from_pos: Position,
-    piece: Piece,
-    to_pos: ?u4,
-};
-
-pub const Position = union(enum) {
-    new: u2,
-    board: u4,
-
-    pub fn isNew(self: Position) bool {
-        return switch (self) {
-            .new => true,
-            .board => false,
-        };
-    }
-};
-
-pub const Piece = struct {
-    sign: u1,
-    size: u2,
-};

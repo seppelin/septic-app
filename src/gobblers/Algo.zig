@@ -52,7 +52,7 @@ pub const Handle = struct {
 const Algo = @This();
 
 state: State,
-pos: Pos,
+board: Board,
 max_depth: u6,
 nodes: u64,
 moves: [42]Move,
@@ -66,11 +66,11 @@ fn update(self: *Algo) void {
     defer self.handle.mutex.unlock();
     if (self.handle.reset) |ctl| {
         self.state = ctl.state;
-        self.pos = Pos.fromBoard(ctl.board);
+        self.board = ctl.board;
         self.max_depth = ctl.max_depth;
 
         self.nodes = 0;
-        self.moves_len = self.pos.getMoves(&self.moves);
+        self.moves_len = self.board.getMoves(&self.moves);
         self.scores = undefined;
         self.scores_len = 0;
 
@@ -151,16 +151,24 @@ fn negamax(self: *Algo, a: i8, b: i8) i8 {
     if (score != -128) {
         return score;
     }
-    // Check if already calculated
-    //score = self.p_table.get(self.pos.getKey());
-    //if (score != -128) return score;
-    // Return if reached max depth
     if (self.max_depth == self.pos.depth) return 0;
 
     // Update alpha beta search window
     if (beta > 127 - self.pos.depth) {
         beta = 127 - self.pos.depth;
         if (alpha >= beta) return beta;
+    }
+
+    // Search moves
+    var bigger: u24 = 0;
+    const sizes = [2]u2{ 2, 1, 0 };
+    for (sizes) |size| {
+        if (self.board.pieceLeft(size)) {
+            var to_pos: u4 = 0;
+            while (to_pos < 9) : (to_pos += 1) {
+                if ()
+            }
+        }
     }
 
     var moves: [42]Move = undefined;
@@ -177,203 +185,5 @@ fn negamax(self: *Algo, a: i8, b: i8) i8 {
         if (score >= beta) return score;
         if (score > alpha) alpha = score;
     }
-    //self.p_table.put(self.pos.getKey(), alpha);
     return alpha;
 }
-
-pub const PosTable = packed struct {
-    const depth = 6;
-};
-
-pub const Move = packed struct {
-    new: bool,
-    size: u2,
-    from_pos: u4,
-    to_pos: u4,
-};
-
-const Pos = struct {
-    layers: [2][3]u24,
-    pieces: [2][3]u2,
-    next_sign: u1,
-    depth: i8,
-
-    const shift_mask = 0b100100100100100100100100;
-    // 642 840  852 741 630  876 543 210
-    const move_layers = [9]u24{
-        0b000001000000001000000001,
-        0b000000000001000000000010,
-        0b001000001000000000000100,
-        0b000000000000010000001000,
-        0b010010000010000000010000,
-        0b000000010000000000100000,
-        0b100000000000100001000000,
-        0b000000000100000010000000,
-        0b000100100000000100000000,
-    };
-
-    fn init() Pos {
-        return Pos{ .layers = [2][3]u24{
-            [3]u24{ 0, 0, 0 },
-            [3]u24{ 0, 0, 0 },
-        }, .pieces = [2][3]u2{ [3]u2{ 2, 2, 2 }, [3]u2{ 2, 2, 2 } }, .next_sign = 0, .depth = 0 };
-    }
-
-    fn fromBoard(board: Board) Pos {
-        var layers = [2][3]u24{
-            [3]u24{ 0, 0, 0 },
-            [3]u24{ 0, 0, 0 },
-        };
-        for (board.fields, 0..) |field, i| {
-            var size: u2 = 0;
-            while (size < 3) : (size += 1) {
-                if (field.pieces[size]) |sign| {
-                    layers[sign][size] |= move_layers[i];
-                }
-            }
-        }
-        return Pos{
-            .layers = layers,
-            .pieces = board.pieces,
-            .next_sign = board.next_sign,
-            .depth = 0,
-        };
-    }
-
-    fn toBoard(self: Pos) Board {
-        var board = Board.init();
-        // fields
-        var pos: u4 = 0;
-        while (pos < 9) : (pos += 1) {
-            var signs = [2]u1{ 0, 1 };
-            for (signs) |sign| {
-                var size: u2 = 0;
-                while (size < 3) : (size += 1) {
-                    if (self.layers[sign][size] & move_layers[pos] != 0) {
-                        board.fields[pos].pieces[size] = sign;
-                    }
-                }
-            }
-        }
-        // pieces
-        board.pieces = self.pieces;
-        return board;
-    }
-
-    fn getKey(self: *Pos) u48 {
-        var key: u48 = 0;
-        var sign: u6 = 0;
-        while (sign < 2) : (sign += 1) {
-            var size: u6 = 0;
-            while (size < 3) : (size += 1) {
-                var piece_count: u8 = 0;
-                var pos: u4 = 0;
-                while (pos < 9) : (pos += 1) {
-                    if (self.layers[sign][size] & move_layers[pos] != 0) {
-                        piece_count <<= 4;
-                        piece_count += pos + 1;
-                    }
-                }
-                key <<= 8;
-                key += piece_count;
-            }
-        }
-        return key;
-    }
-
-    fn doMove(self: *Pos, move: Move) void {
-        // From
-        switch (move.new) {
-            true => self.pieces[self.next_sign][move.size] -= 1,
-            false => self.layers[self.next_sign][move.size] ^= move_layers[move.from_pos],
-        }
-        // To
-        self.layers[self.next_sign][move.size] |= move_layers[move.to_pos];
-
-        self.next_sign = ~self.next_sign;
-        self.depth += 1;
-    }
-
-    fn undoMove(self: *Pos, move: Move) void {
-        self.depth -= 1;
-        self.next_sign = ~self.next_sign;
-
-        // From
-        switch (move.new) {
-            true => self.pieces[self.next_sign][move.size] += 1,
-            false => self.layers[self.next_sign][move.size] |= move_layers[move.from_pos],
-        }
-        // To
-        self.layers[self.next_sign][move.size] ^= move_layers[move.to_pos];
-    }
-
-    fn getMoves(self: *const Pos, buf: *[42]Move) u8 {
-        var len: u8 = 0;
-        var size: u2 = 0;
-        var size_view: u24 = 0;
-
-        while (size < 3) : (size += 1) {
-            // New
-            if (self.pieces[self.next_sign][size] != 0) {
-                self.addMoves(true, size, undefined, buf, &len);
-            }
-            // Board
-            var moveable = self.layers[self.next_sign][2 - size] & ~size_view;
-            var from_pos: u4 = 0;
-            while (from_pos < 9) : (from_pos += 1) {
-                if (moveable & move_layers[from_pos] != 0) {
-                    self.addMoves(false, 2 - size, from_pos, buf, &len);
-                }
-            }
-            size_view |= self.layers[self.next_sign][2 - size] | self.layers[~self.next_sign][2 - size];
-        }
-
-        return len;
-    }
-
-    fn addMoves(self: *const Pos, new: bool, size: u2, from_pos: u4, buf: *[42]Move, len: *u8) void {
-        var to_pos: u4 = 0;
-        var size_view: u24 = undefined;
-        while (to_pos < 9) : (to_pos += 1) {
-            size_view = switch (size) {
-                0 => self.layers[self.next_sign][2] | self.layers[~self.next_sign][2] |
-                    self.layers[self.next_sign][1] | self.layers[~self.next_sign][1] |
-                    self.layers[self.next_sign][0] | self.layers[~self.next_sign][0],
-
-                1 => self.layers[self.next_sign][2] | self.layers[~self.next_sign][2] |
-                    self.layers[self.next_sign][1] | self.layers[~self.next_sign][1],
-
-                2 => self.layers[self.next_sign][2] | self.layers[~self.next_sign][2],
-
-                else => unreachable,
-            };
-
-            if (size_view & move_layers[to_pos] == 0) {
-                buf[len.*] = Move{
-                    .new = new,
-                    .size = size,
-                    .from_pos = from_pos,
-                    .to_pos = to_pos,
-                };
-                len.* += 1;
-            }
-        }
-    }
-
-    fn getScore(self: *const Pos) i8 {
-        var edited: u2 = 0;
-
-        var view = self.layers[self.next_sign][0] & ~self.layers[~self.next_sign][1] | self.layers[self.next_sign][1] & ~self.layers[~self.next_sign][2] | self.layers[self.next_sign][2];
-        edited += @intFromBool(view & (view << 1) & (view << 2) & shift_mask != 0);
-
-        view = self.layers[~self.next_sign][0] & ~self.layers[self.next_sign][1] | self.layers[~self.next_sign][1] & ~self.layers[self.next_sign][2] | self.layers[~self.next_sign][2];
-        edited += @as(u2, @intFromBool(view & (view << 1) & (view << 2) & shift_mask != 0)) * 2;
-
-        return switch (edited) {
-            0 => -128,
-            1 => 127 - self.depth,
-            2 => -127 + self.depth,
-            3 => 0,
-        };
-    }
-};

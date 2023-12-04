@@ -1,19 +1,15 @@
 const Board = @This();
-const max_moves = 7 * 6;
+const width = 7;
+const height = 6;
+const max_moves = width * height;
 
-fields: [7][6]?bool,
-next_sign: bool,
+fields: [2]u64,
 moves: u8,
 
 pub fn init() Board {
-    var fields: [7][6]?bool = undefined;
-    for (&fields) |*column| {
-        for (&column) |*field| {
-            field.* = null;
-        }
-    }
     return Board{
-        .fields = fields,
+        .fields = [2]u64{ 0, 0 },
+        .next_sign = 0,
         .moves = 0,
     };
 }
