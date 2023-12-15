@@ -25,12 +25,10 @@ pub fn signTopView(self: Pos, sign: u1) u9 {
 
 pub fn biggerView(self: Pos, size: u2) u9 {
     return switch (size) {
-        0 => self.layers[0][0] | self.layers[1][0] |
-            self.layers[0][1] | self.layers[1][1] |
+        0 => self.layers[0][1] | self.layers[1][1] |
             self.layers[0][2] | self.layers[1][2],
-        1 => self.layers[0][1] | self.layers[1][1] |
-            self.layers[0][2] | self.layers[1][2],
-        2 => self.layers[0][2] | self.layers[1][2],
+        1 => self.layers[0][2] | self.layers[1][2],
+        2 => 0,
         3 => unreachable,
     };
 }
@@ -82,8 +80,45 @@ pub fn undoMove(self: *Pos, move: Move) void {
     self.layers[self.next_sign][move.size] ^= (1 << move.to_pos);
 }
 
-pub fn pieceLeft(self: Pos, size: u2) bool {
+pub fn doNewMove(self: *Pos, size: u2, to_pos: u4) void {
+    self.pieces[self.next_sign][size] -= 1;
+    self.layers[self.next_sign][size] |= (1 << to_pos);
+    self.next_sign = ~self.next_sign;
+    self.moves += 1;
+}
+
+pub fn doBoardMove(self: *Pos, size: u2, from_pos: u4, to_pos: u4) void {
+    self.pieces[self.next_sign][size] ^= (1 << from_pos);
+    self.layers[self.next_sign][size] |= (1 << to_pos);
+    self.next_sign = ~self.next_sign;
+    self.moves += 1;
+}
+
+pub fn undoNewMove(self: *Pos, size: u2, to_pos: u4) void {
+    self.moves -= 1;
+    self.next_sign = ~self.next_sign;
+    self.layers[self.next_sign][size] ^= (1 << to_pos);
+    self.pieces[self.next_sign][size] += 1;
+}
+
+pub fn undoBoardMove(self: *Pos, size: u2, from_pos: u4, to_pos: u4) void {
+    self.moves -= 1;
+    self.next_sign = ~self.next_sign;
+    self.layers[self.next_sign][size] ^= (1 << to_pos);
+    self.layers[self.next_sign][size] |= (1 << from_pos);
+}
+
+pub fn isNewLeft(self: Pos, size: u2) bool {
     return self.pieces[self.next_sign][size] != 0;
+}
+
+pub fn isMoveable(self: Pos, size: u2, pos: u4) bool {
+    var move = self.layers[self.next_sign][size] & (1 << pos);
+    return (move & self.biggerView(size)) == 0;
+}
+
+pub fn isFree(self: Pos, size: u2, pos: u4) bool {
+    return ((1 << pos) & self.biggerView(size)) == 0;
 }
 
 pub fn getMoves(self: *const Pos, buf: *[42]Move) u8 {
@@ -150,3 +185,9 @@ pub fn getScore(self: *const Pos) i8 {
         3 => 0,
     };
 }
+
+pub const Selection = union(enum) {
+    none: .{},
+    from: .{},
+    both: .{},
+};

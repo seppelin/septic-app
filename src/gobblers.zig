@@ -3,6 +3,7 @@ const rl = @import("raylib");
 const ui = @import("ui.zig");
 const Board = @import("gobblers/Board.zig");
 const Algo = @import("gobblers/Algo.zig");
+const Move = Board.Move;
 const std = @import("std");
 
 pub fn twoPlayer(app: *main.App) main.Scene {
@@ -75,7 +76,7 @@ const AlgoUi = struct {
     state: Algo.State,
     max_depth: u8,
     nodes: u64,
-    moves: [42]Algo.Move,
+    moves: [42]Board.Move,
     moves_len: u8,
     scores: [42]i8,
     scores_len: u8,

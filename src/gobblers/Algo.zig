@@ -1,6 +1,7 @@
 const std = @import("std");
 const Board = @import("Board.zig");
 const Mutex = std.Thread.Mutex;
+const Move = Board.Move;
 const update_time = 100_000_000;
 
 pub const State = enum {
@@ -104,9 +105,9 @@ fn run(self: *Algo) void {
     // untill all moves are evaluated
     while (self.scores_len < self.moves_len) {
         // call negamax
-        self.pos.doMove(self.moves[self.scores_len]);
+        self.board.doMove(self.moves[self.scores_len]);
         var val = self.negamax(-127, 127);
-        self.pos.undoMove(self.moves[self.scores_len]);
+        self.board.undoMove(self.moves[self.scores_len]);
 
         if (val != -128) {
             self.scores[self.scores_len] = -val;
@@ -159,31 +160,48 @@ fn negamax(self: *Algo, a: i8, b: i8) i8 {
         if (alpha >= beta) return beta;
     }
 
-    // Search moves
-    var bigger: u24 = 0;
-    const sizes = [2]u2{ 2, 1, 0 };
+    // Search new moves
+    const sizes = [3]u2{ 0, 1, 2 };
     for (sizes) |size| {
-        if (self.board.pieceLeft(size)) {
+        if (self.board.isNewLeft(size)) {
             var to_pos: u4 = 0;
             while (to_pos < 9) : (to_pos += 1) {
-                if ()
+                if (self.board.isMoveable(size, to_pos)) {
+                    self.board.doNewMove(size, to_pos);
+                    score = self.negamax(-beta, -alpha);
+                    self.board.undoNewMove(size, to_pos);
+
+                    if (score == -128) return -128;
+                    score = -score;
+
+                    if (score >= beta) return score;
+                    if (score > alpha) alpha = score;
+                }
             }
         }
     }
+    // Search board moves
+    const sizes_rev = [3]u2{ 2, 1, 0 };
+    for (sizes_rev) |size| {
+        var from_pos: u4 = 0;
+        while (from_pos < 9) : (from_pos += 1) {
+            if (self.board.isMoveable(size, from_pos)) {
+                var to_pos: u4 = 0;
+                while (to_pos < 9) : (to_pos += 1) {
+                    if (self.board.isFree(size, to_pos)) {
+                        self.board.doBoardMove(size, from_pos, to_pos);
+                        score = self.negamax(-beta, -alpha);
+                        self.board.undoBoardMove(size, from_pos, to_pos);
 
-    var moves: [42]Move = undefined;
-    var len = self.pos.getMoves(&moves);
-    var i: u8 = 0;
-    while (i < len) : (i += 1) {
-        self.pos.doMove(moves[i]);
-        var val = self.negamax(-beta, -alpha);
-        self.pos.undoMove(moves[i]);
+                        if (score == -128) return -128;
+                        score = -score;
 
-        if (val == -128) return -128;
-        score = -val;
-
-        if (score >= beta) return score;
-        if (score > alpha) alpha = score;
+                        if (score >= beta) return score;
+                        if (score > alpha) alpha = score;
+                    }
+                }
+            }
+        }
     }
     return alpha;
 }
