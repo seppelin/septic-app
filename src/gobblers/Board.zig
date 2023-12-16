@@ -221,7 +221,7 @@ pub const Selection = struct {
                     self.move.from_pos = pos;
                 }
             },
-            .from => {
+            .from, .both => {
                 if (board.isFree(self.move.size, pos)) {
                     self.state = .both;
                     self.move.to_pos = pos;
@@ -229,7 +229,6 @@ pub const Selection = struct {
                     self.state = .none;
                 }
             },
-            .both => {},
         }
     }
 };
