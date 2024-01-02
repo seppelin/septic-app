@@ -166,7 +166,7 @@ fn negamax(self: *Algo, a: i8, b: i8) i8 {
         if (self.board.isNewLeft(size)) {
             var to_pos: u4 = 0;
             while (to_pos < 9) : (to_pos += 1) {
-                if (self.board.isMoveable(size, to_pos)) {
+                if (self.board.isMovable(size, to_pos)) {
                     self.board.doNewMove(size, to_pos);
                     score = self.negamax(-beta, -alpha);
                     self.board.undoNewMove(size, to_pos);
@@ -185,7 +185,7 @@ fn negamax(self: *Algo, a: i8, b: i8) i8 {
     for (sizes_rev) |size| {
         var from_pos: u4 = 0;
         while (from_pos < 9) : (from_pos += 1) {
-            if (self.board.isMoveable(size, from_pos)) {
+            if (self.board.isMovable(size, from_pos)) {
                 var to_pos: u4 = 0;
                 while (to_pos < 9) : (to_pos += 1) {
                     if (self.board.isFree(size, to_pos)) {
