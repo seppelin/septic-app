@@ -430,7 +430,7 @@ const Algo = struct {
     const Search = struct {
         algo: *Algo,
         board: Board,
-        depth: u7,
+        depth: i8,
         nodes: u64,
 
         fn init(algo: *Algo, board: Board, depth: u7) Search {
@@ -443,8 +443,8 @@ const Algo = struct {
         }
 
         fn negamax(self: *Search, a: i8, b: i8) i8 {
-            var alpha = a;
-            var beta = b;
+            var alpha = a; // Lower bound
+            var beta = b; // Upper bound
 
             self.nodes += 1;
             // Sync algo every once a while
@@ -463,13 +463,13 @@ const Algo = struct {
             switch (state) {
                 0 => {},
                 1 => return self.depth + 1,
-                2 => return self.depth + 1,
+                2 => return -self.depth - 1,
                 3 => return 0,
             }
             if (self.depth == 0) return 0;
 
-            if (beta > self.depth + 1) {
-                beta = self.depth + 1;
+            if (beta > self.depth) {
+                beta = self.depth;
                 if (alpha >= beta) return alpha;
             }
 
@@ -479,7 +479,7 @@ const Algo = struct {
                 if (self.board.isNewLeft(self.board.sign, size)) {
                     var to_pos: u4 = 0;
                     while (to_pos < 9) : (to_pos += 1) {
-                        if (self.board.isMovable(self.board.sign, size, to_pos)) {
+                        if (self.board.isFree(size, to_pos)) {
                             self.board.doNewMove(size, to_pos);
                             self.depth -= 1;
                             var score = self.negamax(-beta, -alpha);
@@ -581,7 +581,10 @@ const Algo = struct {
         while (true) : (std.time.sleep(update_time)) {
             // Update
             self.mutex.lock();
-            if (self.ctl) |ctl| self.out = Output.init(ctl);
+            if (self.ctl) |ctl| {
+                self.out = Output.init(ctl);
+                self.ctl = null;
+            }
             var state = self.out.state;
             self.mutex.unlock();
 
@@ -618,7 +621,7 @@ const AlgoUi = struct {
     fn draw(self: *AlgoUi) void {
         var pos = self.pos;
         var column_size = self.font_size + 2;
-        var buf: [32]u8 = undefined;
+        var buf: [48]u8 = undefined;
 
         var state_str = switch (self.out.state) {
             .quit => "quit",
@@ -626,13 +629,15 @@ const AlgoUi = struct {
             .run => "run",
         };
 
-        self.drawBuf(&buf, "State {s}, Nodes {}, Depth {}", .{ state_str, self.out.nodes, self.out.depth });
+        self.drawBuf(&buf, "State {s}, Depth {}", .{ state_str, self.out.depth });
+        self.pos.y += column_size;
+        self.drawBuf(&buf, "Nodes {}", .{ self.out.nodes });
 
         var i: u8 = 0;
         while (i < self.out.mlen) : (i += 1) {
             self.pos.y += column_size;
             if (self.pos.y > 850) {
-                self.pos.y = pos.y + column_size;
+                self.pos.y = pos.y + 2 * column_size;
                 self.pos.x += 100;
             }
             var move = self.out.moves[i];
@@ -683,7 +688,7 @@ pub fn twoPlayer() main.Scene {
     var sel = Selection.init();
     var b_ui = BoardUi.init(500, 200);
 
-    var ctl = Algo.Control.init(.run, board, 7);
+    var ctl = Algo.Control.init(.run, board, 10);
     var algo = Algo.init(ctl);
     var a_thread = std.Thread.spawn(.{}, Algo.start, .{&algo}) catch unreachable;
     defer {
@@ -700,6 +705,8 @@ pub fn twoPlayer() main.Scene {
         if (sel.state == .both) {
             board.doMove(sel.move);
             sel.state = .none;
+            ctl.board = board;
+            algo.setCtl(ctl);
         }
         a_ui.tick(&algo);
         if (back.tick()) state = .Menu;
