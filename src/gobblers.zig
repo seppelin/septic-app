@@ -15,13 +15,12 @@ const Board = struct {
     layers: [2][3]u9,
     pieces: [2][3]u2,
     sign: u1,
-    moves: i8,
 
     fn init() Board {
         return Board{ .layers = .{
             .{ 0, 0, 0 },
             .{ 0, 0, 0 },
-        }, .pieces = .{ .{ 2, 2, 2 }, .{ 2, 2, 2 } }, .sign = 0, .moves = 0 };
+        }, .pieces = .{ .{ 2, 2, 2 }, .{ 2, 2, 2 } }, .sign = 0 };
     }
 
     fn signTopView(self: Board, sign: u1) u9 {
@@ -74,10 +73,9 @@ const Board = struct {
 
     /// 0=none 1=win 2=loss 3=draw
     fn getState(self: Board) u2 {
-        var win = checkView(self.signTopView(self.sign));
-        var loss = checkView(self.signTopView(~self.sign));
-        var score = @intFromBool(win) | (@intFromBool(loss) << 1);
-        return score;
+        var win: u2 = @intFromBool(checkView(self.signTopView(self.sign)));
+        var loss: u2 = @intFromBool(checkView(self.signTopView(~self.sign)));
+        return win | loss << 1;
     }
 
     fn checkView(view: u9) bool {
@@ -118,25 +116,21 @@ const Board = struct {
         self.pieces[self.sign][size] -= 1;
         self.layers[self.sign][size] |= (@as(u9, 1) << to_pos);
         self.sign = ~self.sign;
-        self.moves += 1;
     }
 
     fn doBoardMove(self: *Board, size: u2, from_pos: u4, to_pos: u4) void {
-        self.pieces[self.sign][size] ^= (@as(u9, 1) << from_pos);
+        self.layers[self.sign][size] ^= (@as(u9, 1) << from_pos);
         self.layers[self.sign][size] |= (@as(u9, 1) << to_pos);
         self.sign = ~self.sign;
-        self.moves += 1;
     }
 
     fn undoNewMove(self: *Board, size: u2, to_pos: u4) void {
-        self.moves -= 1;
         self.sign = ~self.sign;
         self.layers[self.sign][size] ^= (@as(u9, 1) << to_pos);
         self.pieces[self.sign][size] += 1;
     }
 
     fn undoBoardMove(self: *Board, size: u2, from_pos: u4, to_pos: u4) void {
-        self.moves -= 1;
         self.sign = ~self.sign;
         self.layers[self.sign][size] ^= (@as(u9, 1) << to_pos);
         self.layers[self.sign][size] |= (@as(u9, 1) << from_pos);
@@ -152,11 +146,9 @@ const Board = struct {
         self.layers[self.sign][move.size] |= (@as(u9, 1) << move.to_pos);
 
         self.sign = ~self.sign;
-        self.moves += 1;
     }
 
     fn undoMove(self: *Board, move: Move) void {
-        self.moves -= 1;
         self.sign = ~self.sign;
 
         // From
@@ -397,15 +389,22 @@ const Algo = struct {
     const Control = struct {
         state: State,
         board: Board,
-        // 0=infinite
-        max_depth: u6,
+        depth: u7,
+
+        fn init(state: State, board: Board, depth: u7) Control {
+            return Control{
+                .state = state,
+                .board = board,
+                .depth = depth,
+            };
+        }
     };
 
     const Output = struct {
         state: State,
         board: Board,
-        max_depth: u6,
-        nodes_done: u64,
+        depth: u7,
+        nodes: u64,
         moves: [42]Move,
         mlen: u8,
         scores: [42]i8,
@@ -418,8 +417,8 @@ const Algo = struct {
             return Output{
                 .state = ctl.state,
                 .board = ctl.board,
-                .max_depth = ctl.max_depth,
-                .nodes_done = 0,
+                .depth = ctl.depth,
+                .nodes = 0,
                 .moves = moves,
                 .mlen = mlen,
                 .scores = undefined,
@@ -429,34 +428,33 @@ const Algo = struct {
     };
 
     const Search = struct {
-        board: Board,
-        max_moves: u6,
-        nodes_done: u64,
         algo: *Algo,
+        board: Board,
+        depth: u7,
+        nodes: u64,
 
-        fn init(board: Board, max_depth: u6, algo: *Algo) Search {
+        fn init(algo: *Algo, board: Board, depth: u7) Search {
             return Search{
                 .algo = algo,
                 .board = board,
-                .max_moves = board.moves + max_depth,
-                .nodes_done = 0,
+                .depth = depth,
+                .nodes = 0,
             };
         }
 
-        fn evaluate(self: *Search, a: i8, b: i8) i8 {
+        fn negamax(self: *Search, a: i8, b: i8) i8 {
             var alpha = a;
             var beta = b;
 
-            self.nodes_done += 1;
-            // Sync handle every once a while
-            if (self.nodes_done % 100_000 == 0) {
+            self.nodes += 1;
+            // Sync algo every once a while
+            if (self.nodes % 100_000 == 0) {
                 self.algo.mutex.lock();
                 if (self.algo.ctl != null) {
                     self.algo.mutex.unlock();
                     return -128;
                 } else {
-                    self.algo.out.nodes_done += self.nodes_done;
-                    self.nodes_done = 0;
+                    self.algo.out.nodes = self.nodes;
                     self.algo.mutex.unlock();
                 }
             }
@@ -464,29 +462,32 @@ const Algo = struct {
             var state = self.board.getState();
             switch (state) {
                 0 => {},
-                1 => return 127 - self.board.moves,
-                2 => return -127 + self.board.moves,
+                1 => return self.depth + 1,
+                2 => return self.depth + 1,
                 3 => return 0,
             }
-            if (self.max_moves == self.board.moves) return 0;
+            if (self.depth == 0) return 0;
 
-            beta = @min(beta, 126 - self.board.moves);
-            if (alpha >= beta) return alpha;
+            if (beta > self.depth + 1) {
+                beta = self.depth + 1;
+                if (alpha >= beta) return alpha;
+            }
 
             // Search new moves
             const sizes = [3]u2{ 0, 1, 2 };
             for (sizes) |size| {
-                if (self.board.isNewLeft(size)) {
+                if (self.board.isNewLeft(self.board.sign, size)) {
                     var to_pos: u4 = 0;
                     while (to_pos < 9) : (to_pos += 1) {
-                        if (self.board.isMovable(size, to_pos)) {
+                        if (self.board.isMovable(self.board.sign, size, to_pos)) {
                             self.board.doNewMove(size, to_pos);
+                            self.depth -= 1;
                             var score = self.negamax(-beta, -alpha);
+                            self.depth += 1;
                             self.board.undoNewMove(size, to_pos);
 
                             if (score == -128) return -128;
                             score = -score;
-
                             if (score >= beta) return score;
                             if (score > alpha) alpha = score;
                         }
@@ -498,17 +499,18 @@ const Algo = struct {
             for (sizes_rev) |size| {
                 var from_pos: u4 = 0;
                 while (from_pos < 9) : (from_pos += 1) {
-                    if (self.board.isMovable(size, from_pos)) {
+                    if (self.board.isMovable(self.board.sign, size, from_pos)) {
                         var to_pos: u4 = 0;
                         while (to_pos < 9) : (to_pos += 1) {
                             if (self.board.isFree(size, to_pos)) {
                                 self.board.doBoardMove(size, from_pos, to_pos);
+                                self.depth -= 1;
                                 var score = self.negamax(-beta, -alpha);
+                                self.depth += 1;
                                 self.board.undoBoardMove(size, from_pos, to_pos);
 
                                 if (score == -128) return -128;
                                 score = -score;
-
                                 if (score >= beta) return score;
                                 if (score > alpha) alpha = score;
                             }
@@ -532,25 +534,38 @@ const Algo = struct {
         };
     }
 
+    fn setCtl(self: *Algo, ctl: Control) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.ctl = ctl;
+    }
+
     fn run(self: *Algo) void {
-        var alpha = -127; // Lower bound
-        var beta = 127; // Upper bound
+        var alpha: i8 = -127; // Lower bound
+        var beta: i8 = 127; // Upper bound
+        self.mutex.lock();
+        var search = Search.init(self, self.out.board, self.out.depth);
+        self.mutex.unlock();
+
+        if (search.board.getState() != 0 or search.depth == 0) return;
+        search.depth -= 1;
+
         while (true) {
             self.mutex.lock();
-            if (self.out.mlen < self.out.slen) {
-                var search = Search.init(self.out.board, self.out.max_depth, self);
+            if (self.out.slen < self.out.mlen) {
                 search.board.doMove(self.out.moves[self.out.slen]);
                 self.mutex.unlock();
 
-                var val = search.evaluate(-beta, -alpha);
-                if (val == -128) return; // -128: there's a reset from ctl
-                val = -val;
-                if (val > alpha) alpha = val; // Update search window
+                var score = search.negamax(-beta, -alpha);
+                if (score == -128) return; // -128: there's a reset from ctl
+                score = -score;
+                if (score > alpha) alpha = score; // Update search window
 
                 self.mutex.lock();
-                self.out.scores[self.out.slen] = -val;
+                search.board.undoMove(self.out.moves[self.out.slen]);
+                self.out.scores[self.out.slen] = score;
                 self.out.slen += 1;
-                self.out.nodes_done += search.nodes_done;
+                self.out.nodes = search.nodes;
                 self.mutex.unlock();
             }
             // All moves done -> sync out + return
@@ -583,112 +598,112 @@ const AlgoUi = struct {
     pos: rl.Vector2,
     font: rl.Font,
     font_size: f32,
+    spacing: f32,
     tint: rl.Color,
+    out: Algo.Output,
 
-    state: Algo.State,
-    max_depth: u8,
-    nodes: u64,
-    moves: [42]Board.Move,
-    moves_len: u8,
-    scores: [42]i8,
-    scores_len: u8,
-
-    fn init(x: f32, y: f32, font: rl.Font, font_size: f32, tint: rl.Color, handle: *Algo.Handle) AlgoUi {
-        var a_state: AlgoUi = undefined;
-        a_state.pos = rl.Vector2.init(x, y);
-        a_state.font = font;
-        a_state.font_size = font_size;
-        a_state.tint = tint;
-        a_state.update(handle);
-        return a_state;
-    }
-
-    fn update(self: *AlgoUi, handle: *Algo.Handle) void {
-        handle.mutex.lock();
-        self.state = handle.state;
-        self.max_depth = handle.max_depth;
-        self.nodes = handle.nodes;
-        self.moves = handle.moves;
-        self.moves_len = handle.moves_len;
-        self.scores = handle.scores;
-        self.scores_len = handle.scores_len;
-        handle.mutex.unlock();
+    fn init(x: i32, y: i32, font: rl.Font, font_size: f32, spacing: f32, tint: rl.Color, algo: *Algo) AlgoUi {
+        algo.mutex.lock();
+        defer algo.mutex.unlock();
+        return AlgoUi{
+            .pos = rl.Vector2{ .x = @floatFromInt(x), .y = @floatFromInt(y) },
+            .font = font,
+            .font_size = font_size,
+            .spacing = spacing,
+            .tint = tint,
+            .out = algo.out,
+        };
     }
 
     fn draw(self: *AlgoUi) void {
-        var column_size = self.font_size + 4;
-        var column_pos = self.pos;
-        var buf: [16]u8 = undefined;
-        var state_s = switch (self.state) {
-            Algo.State.quit => "quit",
-            Algo.State.wait => "wait",
-            Algo.State.run => "run",
+        var pos = self.pos;
+        var column_size = self.font_size + 2;
+        var buf: [32]u8 = undefined;
+
+        var state_str = switch (self.out.state) {
+            .quit => "quit",
+            .wait => "wait",
+            .run => "run",
         };
-        self.drawBuf(&buf, "Algo {s}:", .{state_s}, column_pos);
 
-        column_pos.y += column_size;
-        self.drawBuf(&buf, "Depth {}", .{self.max_depth}, column_pos);
-
-        column_pos.y += column_size;
-        self.drawBuf(&buf, "Nds {}", .{self.nodes}, column_pos);
-
-        column_pos.y += column_size;
-        self.drawBuf(&buf, "Moves:", .{}, column_pos);
+        self.drawBuf(&buf, "State {s}, Nodes {}, Depth {}", .{ state_str, self.out.nodes, self.out.depth });
 
         var i: u8 = 0;
-        while (i < self.moves_len) : (i += 1) {
-            if (i == 20) {
-                column_pos.x += 100;
-                column_pos.y -= 20 * (2 * column_size - 5);
+        while (i < self.out.mlen) : (i += 1) {
+            self.pos.y += column_size;
+            if (self.pos.y > 850) {
+                self.pos.y = pos.y + column_size;
+                self.pos.x += 100;
             }
-            column_pos.y += column_size;
-            var move = self.moves[i];
+            var move = self.out.moves[i];
             if (move.new) {
-                self.drawBuf(&buf, "N: s{} t{}", .{ move.size, move.to_pos }, column_pos);
+                self.drawBuf(&buf, "New: s{}, t{}", .{ move.size, move.to_pos });
             } else {
-                self.drawBuf(&buf, "B: s{} f{} t{}", .{ move.size, move.from_pos, move.to_pos }, column_pos);
+                self.drawBuf(&buf, "Board: s{}, f{}, t{}", .{ move.size, move.from_pos, move.to_pos });
             }
-            column_pos.y += column_size - 5;
-            if (i < self.scores_len) {
+            if (i < self.out.slen) {
+                self.pos.y += column_size - 4;
+
                 var tint = self.tint;
-                if (self.scores[i] > 0) {
+                if (self.out.scores[i] > 0) {
                     self.tint = rl.Color.light_gray;
-                } else if (self.scores[i] < 0) {
+                } else if (self.out.scores[i] < 0) {
                     self.tint = rl.Color.dark_gray;
                 }
-                self.drawBuf(&buf, "Score: {}", .{self.scores[i]}, column_pos);
+                self.drawBuf(&buf, "Score: {}", .{self.out.scores[i]});
                 self.tint = tint;
             }
         }
+        self.pos = pos;
     }
 
-    fn drawBuf(self: AlgoUi, buf: []u8, comptime fmt: []const u8, args: anytype, pos: rl.Vector2) void {
+    fn drawBuf(self: AlgoUi, buf: []u8, comptime fmt: []const u8, args: anytype) void {
         for (buf) |*char| {
             char.* = ' ';
         }
         var fbs = std.io.fixedBufferStream(buf);
         std.fmt.format(fbs.writer(), fmt ++ "\x00", args) catch unreachable;
-        rl.drawTextEx(self.font, buf[0 .. fbs.pos - 1 :0], pos, self.font_size, 1, self.tint);
+        rl.drawTextEx(self.font, buf[0 .. fbs.pos - 1 :0], self.pos, self.font_size, 1, self.tint);
+    }
+
+    fn tick(self: *AlgoUi, algo: *Algo) void {
+        algo.mutex.lock();
+        self.out = algo.out;
+        algo.mutex.unlock();
+
+        self.draw();
     }
 };
 
-pub fn twoPlayer(app: *main.App) main.Scene {
+pub fn twoPlayer() main.Scene {
     var state = main.Scene.Running;
+    var back = ui.Button.from_text(10, 10, main.font, "Back", 32, 1, rl.Color.red);
+    
     var board = Board.init();
-    var selection = Selection.init();
-    var board_ui = BoardUi.init(500, 200);
+    var sel = Selection.init();
+    var b_ui = BoardUi.init(500, 200);
+
+    var ctl = Algo.Control.init(.run, board, 7);
+    var algo = Algo.init(ctl);
+    var a_thread = std.Thread.spawn(.{}, Algo.start, .{&algo}) catch unreachable;
+    defer {
+        ctl.state = .quit;
+        algo.setCtl(ctl);
+        a_thread.join();
+    }
+    var a_ui = AlgoUi.init(1350, 30, main.info_font, 16, 1, rl.Color.purple, &algo);
 
     while (state == .Running) {
         rl.beginDrawing();
         rl.clearBackground(main.bg);
-
-        board_ui.tick(board, &selection);
-        if (selection.state == .both) {
-            board.doMove(selection.move);
-            selection.state = .none;
+        b_ui.tick(board, &sel);
+        if (sel.state == .both) {
+            board.doMove(sel.move);
+            sel.state = .none;
         }
+        a_ui.tick(&algo);
+        if (back.tick()) state = .Menu;
 
-        if (app.back_b.tick()) state = .Menu;
         rl.endDrawing();
         if (rl.windowShouldClose()) state = .Quit;
     }

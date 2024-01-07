@@ -9,9 +9,7 @@ pub const Button = struct {
     pub fn init(image: rl.Image, x: i32, y: i32, width: i32, height: i32) Button {
         var resize_img = rl.imageCopy(image);
         defer rl.unloadImage(resize_img);
-
         rl.imageResize(&resize_img, width, height);
-
         var texture = rl.loadTextureFromImage(resize_img);
         rl.setTextureFilter(texture, 1);
 

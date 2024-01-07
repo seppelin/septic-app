@@ -3,6 +3,10 @@ const menu = @import("menu.zig");
 const gobblers = @import("gobblers.zig");
 const ui = @import("ui.zig");
 
+pub const icon_data = @embedFile("septic_icon.png");
+pub const font_data = @embedFile("intuitive.ttf");
+pub const info_font_data = @embedFile("Lato-Regular.ttf");
+
 pub const bg = rl.Color{
     .r = 48,
     .g = 50,
@@ -17,43 +21,27 @@ pub const Scene = enum {
     Quit,
 };
 
-pub const App = struct {
-    game_font: rl.Font,
-    info_font: rl.Font,
-    back_b: ui.Button,
-
-    fn init() App {
-        var icon = rl.loadImage("assets/septic_small.png");
-        defer rl.unloadImage(icon);
-        return App{
-            .game_font = rl.loadFont("assets/intuitive.ttf"),
-            .info_font = rl.loadFont("assets/Lato-Regular.ttf"),
-            .back_b = ui.Button.init(icon, 10, 10, 50, 50),
-        };
-    }
-
-    fn deinit(self: *App) void {
-        rl.unloadFont(self.game_font);
-        rl.unloadFont(self.info_font);
-        self.back_b.deinit();
-    }
-};
+pub var font: rl.Font = undefined;
+pub var info_font: rl.Font = undefined;
 
 pub fn main() !void {
     rl.initWindow(1600, 900, "septic");
     defer rl.closeWindow();
 
+    var icon = rl.loadImageFromMemory(".png", icon_data);
+    rl.setWindowIcon(icon);
+    rl.unloadImage(icon);
     rl.setTargetFPS(60);
 
-    var app = App.init();
-    defer app.deinit();
+    font = rl.loadFontFromMemory(".ttf", font_data, 32, null);
+    info_font = rl.loadFontFromMemory(".ttf", info_font_data, 32, null);
 
     var scene = Scene.Menu;
 
     while (true) {
         scene = switch (scene) {
-            Scene.Menu => menu.run(&app),
-            Scene.Gobblers => gobblers.twoPlayer(&app),
+            Scene.Menu => menu.run(),
+            Scene.Gobblers => gobblers.twoPlayer(),
             else => break,
         };
     }
