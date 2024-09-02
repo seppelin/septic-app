@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use freya::prelude::*;
 use gobblers::*;
 use skia_safe::{Canvas, Color, Paint};
@@ -95,26 +97,98 @@ fn render_new(canvas: &Canvas, unit: f32, player: i32, boarder: &Paint, b: &Game
 }
 
 #[component]
+pub fn Gob() -> Element {
+    let mut is_algo = use_signal(|| false);
+    let mut board = use_signal(|| GameBoard::new(true));
+
+    rsx!(rect {
+        width: "100%",
+        height: "100%",
+        rect {
+            padding: "10",
+            width: "fill",
+            main_align: "end",
+            cross_align: "end",
+            direction: "horizontal",
+            Button {
+                onclick: move |_| {
+                    let new = !*is_algo.read();
+                    is_algo.replace(new);
+                },
+                label {
+                    "Toggle Algo"
+                }
+            }
+            Button {
+                onclick: move |_| {
+                    board.replace(GameBoard::new(true));
+                },
+                label {
+                    "Reset"
+                }
+            }
+            Button {
+                onclick: move |_| {
+                    board.write().undo_move();
+                },
+                label {
+                    "Undo"
+                }
+            }
+        }
+        rect {
+            direction: "horizontal",
+            width: "fill",
+            height: "fill",
+            main_align: "end",
+            rect {
+                width: if *is_algo.read() {
+                     "calc(100% - 250)"
+                } else {
+                    "100%"
+                },
+                height: "fill",
+                GobBoard{ board }
+            }
+            if *is_algo.read() {
+                GobAlgo{ board }
+            }
+        }
+    })
+}
+
+#[component]
 pub fn GobAlgo(board: Signal<GameBoard>) -> Element {
     use search::*;
     let mut search = use_hook_with_cleanup(|| Search::new(), |s| s.flush());
-    let mut last_board = use_signal(|| Board { layers: [0; 6], pieces: [0; 6], player: 4 });
+    let mut last_board = use_signal(|| Board {
+        layers: [0; 6],
+        pieces: [0; 6],
+        player: 4,
+    });
     let mut evals = use_signal(|| Vec::new());
     if *last_board.read() != *board.read().get_board() {
         last_board.replace(*board.read().get_board());
         if board.read().get_state() == State::InGame {
-            evals.replace(board.read().get_moves().iter().map(|m| {
-                let mut b = board.read().clone();
-                b.do_move(*m);
-                let mut eval = search.evaluate(&b, 9);
-                eval.depth += 1;
-                if eval.kind == EvalKind::Win {
-                    eval.kind = EvalKind::Loss;
-                } else if eval.kind == EvalKind::Loss {
-                    eval.kind = EvalKind::Win;
-                }
-                (*m, eval)
-            }).collect());
+            evals.replace(
+                board
+                    .read()
+                    .get_moves()
+                    .iter()
+                    .map(|m| {
+                        let mut b = board.read().clone();
+                        b.do_move(*m);
+                        let mut eval = search.evaluate(&b, 9);
+                        eval.depth += 1;
+                        if eval.kind == EvalKind::Win {
+                            eval.kind = EvalKind::Loss;
+                        } else if eval.kind == EvalKind::Loss {
+                            eval.kind = EvalKind::Win;
+                        }
+                        (*m, eval)
+                    })
+                    .collect(),
+            );
         } else {
             evals.write().clear();
         }
@@ -133,7 +207,11 @@ pub fn GobAlgo(board: Signal<GameBoard>) -> Element {
                 0 - e.depth as i32
             }
         };
-        return get_score(b.1).cmp(&get_score(a.1));
+        let mut order = get_score(b.1).cmp(&get_score(a.1));
+        if order == Ordering::Equal {
+            order = b.1.nodes.cmp(&a.1.nodes);
+        }
+        return order;
     });
 
     rsx!(rect {
@@ -191,36 +269,35 @@ pub fn GobAlgo(board: Signal<GameBoard>) -> Element {
 pub fn GobBoard(board: Signal<GameBoard>) -> Element {
     let pos = use_signal_sync(|| (0 as f32, (0.0, 0.0)));
 
-    let canvas = use_canvas(&(pos, board.read().clone()), |(ps, b)| {
-        Box::new(move |canvas, _, region| {
-            let (max_x, max_y) = region.size.to_tuple();
+    let canvas = use_canvas(move || {
+        let b = board();
+        Box::new(move |ctx| {
+            let (max_x, max_y) = ctx.area.size.to_tuple();
             let unit = std::cmp::min((max_x / 6.25) as i32, (max_y / 3.25) as i32) as f32;
 
-            let trans_x = region.min_x() + (max_x - unit * 6.25) / 2.0;
-            let trans_y = region.min_y() + (max_y - unit * 3.25) / 2.0;
+            let trans_x = ctx.area.min_x() + (max_x - unit * 6.25) / 2.0;
+            let trans_y = ctx.area.min_y() + (max_y - unit * 3.25) / 2.0;
 
-            let mut pos = ps.clone();
-            pos.replace((unit, (trans_x, trans_y)));
+            pos.clone().replace((unit, (trans_x, trans_y)));
 
             // Translate to board start
-            canvas.translate((trans_x, trans_y));
+            ctx.canvas.translate((trans_x, trans_y));
 
-            let mut boarder = Paint::default();
-            boarder.set_color(Color::from_rgb(150, 110, 150));
-            boarder.set_anti_alias(true);
-            boarder.set_style(skia_safe::PaintStyle::Stroke);
-            boarder.set_stroke_width(unit / 32.0);
+            let mut border = Paint::default();
+            border.set_color(Color::from_rgb(150, 110, 150));
+            border.set_anti_alias(true);
+            border.set_style(skia_safe::PaintStyle::Stroke);
+            border.set_stroke_width(unit / 32.0);
 
-            render_new(canvas, unit, 0, &boarder, &b);
-            render_new(canvas, unit, 1, &boarder, &b);
-            render_board(canvas, unit, &boarder, &b);
+            render_new(ctx.canvas, unit, 0, &border, &b);
+            render_new(ctx.canvas, unit, 1, &border, &b);
+            render_board(ctx.canvas, unit, &border, &b);
         })
     });
 
     let onclick = move |e: Event<MouseData>| {
         let player = board.read().player();
-        let pos = pos.clone();
-        let (unit, (start_x, start_y)) = *pos.read();
+        let (unit, (start_x, start_y)) = *pos.clone().read();
         let mx = e.screen_coordinates.x as f32;
         let my = e.screen_coordinates.y as f32;
 
@@ -257,7 +334,7 @@ pub fn GobBoard(board: Signal<GameBoard>) -> Element {
             Canvas {
                 canvas,
                 theme: theme_with!(CanvasTheme {
-                    background: "rgb(48, 48, 48)".into(),
+                    background: "transparent".into(),
                     width: "fill".into(),
                     height: "fill".into(),
                 }),
